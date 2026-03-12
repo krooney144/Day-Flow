@@ -361,6 +361,7 @@ function ScheduleBlock({
         {block.type === "task" && onToggle && (
           <button
             aria-label={completed ? `Mark "${block.title}" incomplete` : `Complete "${block.title}"`}
+            onPointerDown={(e) => e.stopPropagation()}
             onClick={(e) => {
               e.stopPropagation();
               onToggle();
@@ -388,6 +389,7 @@ function ScheduleBlock({
             {onMoveToTomorrow && (
               <button
                 aria-label="Move to tomorrow"
+                onPointerDown={(e) => e.stopPropagation()}
                 onClick={(e) => {
                   e.stopPropagation();
                   onMoveToTomorrow();
