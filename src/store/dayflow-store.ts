@@ -359,6 +359,8 @@ export function useDayFlowStore() {
           ? { ...t, status: "dropped" as const, completedAt: new Date().toISOString() }
           : t
       ),
+      // Remove associated time blocks from the schedule
+      timeBlocks: s.timeBlocks.filter((b) => b.taskId !== id),
     }));
   }, [setState]);
 
