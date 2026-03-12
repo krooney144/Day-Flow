@@ -151,11 +151,11 @@ const PLANNER_TOOLS = [
     function: {
       name: "generate_schedule",
       description:
-        "Generate a day schedule as time blocks. Only schedule tasks with horizon 'today' or 'soon'. Leave 'this-week' and 'backlog' items on the task list only. Include meals, breaks, and transition buffers. NEVER schedule blocks before the current time.",
+        "Generate a day schedule as time blocks for a specific date. You can call this multiple times for different dates (e.g. today + tomorrow, or a whole week). For today, only schedule after the current time. For future dates, schedule freely within work hours. Include meals, breaks, and transition buffers.",
       parameters: {
         type: "object",
         properties: {
-          date: { type: "string", description: "YYYY-MM-DD" },
+          date: { type: "string", description: "YYYY-MM-DD — the date to schedule for. Can be today, tomorrow, or any future date." },
           blocks: {
             type: "array",
             items: {
@@ -163,7 +163,7 @@ const PLANNER_TOOLS = [
               properties: {
                 title: { type: "string" },
                 categoryId: { type: "string" },
-                startHour: { type: "number", description: "0-23, decimals for partial hours (e.g. 9.5 = 9:30). MUST be after current time." },
+                startHour: { type: "number", description: "0-23, decimals for partial hours (e.g. 9.5 = 9:30). For today: must be after current time. For future dates: use full work hours." },
                 durationHours: { type: "number" },
                 type: { type: "string", enum: ["task", "meal", "break", "transition", "event"] },
                 taskId: { type: "string", description: "Link to existing task ID if applicable" },
@@ -268,6 +268,29 @@ function buildSystemPrompt(currentTasks, preferences, timeBlocks, customProjects
   const dayName = dayNames[now.getDay()];
   const currentHour = now.getHours() + now.getMinutes() / 60;
   const timeStr = now.toLocaleTimeString("en-US", { hour: "2-digit", minute: "2-digit" });
+  const workEndHour = preferences.workEndHour || 18;
+  const workStartHour = preferences.workStartHour || 8;
+
+  // Build date reference: today + next 13 days
+  const dateReference = [];
+  for (let i = 0; i <= 13; i++) {
+    const d = new Date(now);
+    d.setDate(d.getDate() + i);
+    const dateStr = d.toISOString().split("T")[0];
+    const label = i === 0 ? "Today" : i === 1 ? "Tomorrow" : dayNames[d.getDay()];
+    dateReference.push(`${label}: ${dateStr} (${dayNames[d.getDay()]})`);
+  }
+
+  // End-of-day detection
+  const isPastWorkHours = currentHour >= workEndHour;
+  const schedulingDateContext = isPastWorkHours
+    ? `It is currently past your work hours (${timeStr}). The day is essentially over.
+When the user asks to schedule tasks without specifying a date, default to TOMORROW (${dateReference[1].split(":")[1].trim().split(" ")[0]}).
+For tomorrow and all future dates, schedule starting from ${workStartHour}:00 (workStartHour) — there is no "current time" restriction on future days.
+Only schedule something for today if the user explicitly says "today" or "tonight".`
+    : `The current time is ${timeStr} (hour ${currentHour.toFixed(2)}).
+For TODAY only: schedule blocks after ${currentHour.toFixed(2)} (the current time). Do not place new blocks before now on today's date.
+For TOMORROW and all future dates: schedule freely within work hours (${workStartHour}:00 – ${workEndHour}:00). There is no "current time" restriction on future days.`;
 
   const taskList = currentTasks.length > 0
     ? currentTasks
@@ -278,27 +301,51 @@ function buildSystemPrompt(currentTasks, preferences, timeBlocks, customProjects
         .join("\n")
     : "No tasks yet.";
 
-  const blockList = timeBlocks.length > 0
-    ? timeBlocks
-        .map(
-          (b) =>
-            `- ${b.startHour}:00 ${b.title} (${b.type}, ${b.durationHours}h${b.taskId ? `, task: ${b.taskId}` : ""})`
-        )
-        .join("\n")
-    : "No schedule blocks yet.";
+  // Group blocks by date for multi-day context
+  const blocksByDate = {};
+  for (const b of timeBlocks) {
+    if (!blocksByDate[b.date]) blocksByDate[b.date] = [];
+    blocksByDate[b.date].push(b);
+  }
+  const blockDates = Object.keys(blocksByDate).sort();
+  let scheduleSection = "";
+  if (blockDates.length > 0) {
+    for (const date of blockDates) {
+      const blocks = blocksByDate[date].sort((a, b) => a.startHour - b.startHour);
+      const dateLabel = date === today ? `Today (${date})` : `${dayNames[new Date(date + "T12:00:00").getDay()]} (${date})`;
+      scheduleSection += `\n${dateLabel}:\n`;
+      scheduleSection += blocks
+        .map((b) => `- ${b.startHour}:00 ${b.title} (${b.type}, ${b.durationHours}h${b.taskId ? `, task: ${b.taskId}` : ""})`)
+        .join("\n");
+      scheduleSection += "\n";
+    }
+  } else {
+    scheduleSection = "\nNo schedule blocks yet.\n";
+  }
 
   return `You are a calm, grounded daily planner assistant. You help people organize their day realistically and kindly.
 
 You schedule like a realistic human assistant, not a productivity maximizer.
 
+== DATE & TIME CONTEXT ==
+
 Current date: ${today} (${dayName})
 Current time: ${timeStr}
 Current hour (decimal): ${currentHour.toFixed(2)}
 
-CRITICAL TIME RULE: The current time is ${timeStr}. NEVER schedule any block before hour ${currentHour.toFixed(2)}. All new schedule blocks MUST start AFTER the current time. Any block in the past is invalid.
+Date reference (use these exact dates when scheduling):
+${dateReference.join("\n")}
+
+== SCHEDULING TIME RULES ==
+
+${schedulingDateContext}
+
+MULTI-DAY SCHEDULING: You can schedule for ANY date — today, tomorrow, next week, next month. Use the generate_schedule tool with the appropriate date in YYYY-MM-DD format. You can call generate_schedule multiple times in one response for different dates.
+
+When the user says "next Monday", "this Friday", "March 20th", etc., calculate the correct YYYY-MM-DD date from the reference above and use it.
 
 User's preferences:
-- Work hours: ${preferences.workStartHour}:00 – ${preferences.workEndHour}:00
+- Work hours: ${workStartHour}:00 – ${workEndHour}:00
 - Lunch: ${preferences.lunchHour}:00
 - Workout preference: ${preferences.workoutTime}
 - Default task duration: ${preferences.defaultTaskDuration} min
@@ -306,8 +353,8 @@ User's preferences:
 Current tasks:
 ${taskList}
 
-Today's schedule:
-${blockList}
+Existing schedule:
+${scheduleSection}
 
 Available categories and their sub-projects:
 ${buildProjectList(customProjects)}
@@ -419,12 +466,14 @@ Unless the task is truly critical.
 - Use conversational text for advice, encouragement, clarification, or discussion
 - You can call multiple tools in one response
 - When the user brain dumps, extract individual tasks and create them with create_tasks
-- After creating tasks with create_tasks, also call generate_schedule to place "today" horizon tasks on the calendar. Never leave today-horizon tasks unscheduled.
+- After creating tasks with create_tasks, also call generate_schedule to place schedulable tasks on the calendar. Choose the appropriate date for each task based on context.
+- You can call generate_schedule MULTIPLE TIMES in one response for different dates. For example, if the user wants to plan Monday and Tuesday, call generate_schedule once with Monday's date and blocks, and again with Tuesday's date and blocks.
 - ALWAYS include a conversational message alongside any tool calls
 - Refer to tasks by their title, not their ID
 - For priorities: 1 = urgent/critical, 2 = important, 3 = normal, 4 = low, 5 = whenever
 - When creating tasks, always set the project field based on context clues. If unsure, ask.
 - When creating tasks, decide the horizon based on context: urgent/today mentions → "today", next few days → "soon", this week → "this-week", vague/someday → "backlog"
+- When the user asks to schedule something for a specific date (e.g. "Thursday", "next week"), use the date reference above to find the exact YYYY-MM-DD and call generate_schedule with that date
 
 == TONE ==
 
