@@ -11,7 +11,23 @@ const START_HOUR = 0;
 const END_HOUR = 24;
 const SNAP_MINUTES = 15;
 
+// Desktop breakpoint for responsive 3-day view
+const DESKTOP_MIN_WIDTH = 768;
+
 type ScheduleView = "day" | "3day" | "week";
+
+function useIsDesktop() {
+  const [isDesktop, setIsDesktop] = useState(
+    typeof window !== "undefined" ? window.innerWidth >= DESKTOP_MIN_WIDTH : false
+  );
+  useEffect(() => {
+    const mql = window.matchMedia(`(min-width: ${DESKTOP_MIN_WIDTH}px)`);
+    const handler = (e: MediaQueryListEvent) => setIsDesktop(e.matches);
+    mql.addEventListener("change", handler);
+    return () => mql.removeEventListener("change", handler);
+  }, []);
+  return isDesktop;
+}
 
 export default function SchedulePage() {
   const { getBlocksForDate, getCategory, preferences, tasks } = useDayFlow();
@@ -150,6 +166,15 @@ function snapToGrid(hour: number): number {
   return Math.round(hour * increments) / increments;
 }
 
+/** Scroll position for the day view: center on current time with 3h above, 4h below */
+function getScrollForCurrentTime(containerHeight: number): number {
+  const now = new Date();
+  const currentHour = now.getHours() + now.getMinutes() / 60;
+  // Show 3 hours before current time at the top
+  const targetTopHour = Math.max(0, currentHour - 3);
+  return targetTopHour * HOUR_HEIGHT;
+}
+
 function DayView({ dateStr, onEditTask }: { dateStr: string; onEditTask: (taskId: string) => void }) {
   const { getBlocksForDate, getCategory, toggleTaskComplete, tasks, updateTimeBlock, moveBlockToDate, displaceBlock } = useDayFlow();
   const blocks = getBlocksForDate(dateStr);
@@ -161,13 +186,16 @@ function DayView({ dateStr, onEditTask }: { dateStr: string; onEditTask: (taskId
   const [draggingId, setDraggingId] = useState<string | null>(null);
   const [dragPreviewHour, setDragPreviewHour] = useState<number | null>(null);
 
-  // Auto-scroll to ~7 AM on mount
+  // Auto-scroll: center on current time if today, otherwise show ~8 AM
   useEffect(() => {
     if (scrollRef.current) {
-      const scrollTo = 7 * HOUR_HEIGHT; // 7 AM
-      scrollRef.current.scrollTop = scrollTo;
+      if (isToday) {
+        scrollRef.current.scrollTop = getScrollForCurrentTime(scrollRef.current.clientHeight);
+      } else {
+        scrollRef.current.scrollTop = 8 * HOUR_HEIGHT; // 8 AM for non-today
+      }
     }
-  }, [dateStr]);
+  }, [dateStr, isToday]);
 
   const isTaskCompleted = (taskId?: string) => {
     if (!taskId) return false;
@@ -418,6 +446,7 @@ function ScheduleBlock({
 
         {/* Action buttons */}
         <div className="flex items-center gap-0.5 shrink-0">
+          {/* Edit button — shown for ALL blocks with a taskId, including fixed */}
           {onEdit && (
             <button
               aria-label="Edit task"
@@ -450,7 +479,220 @@ function ScheduleBlock({
   );
 }
 
+// ─── Compact block for the 3-day grid view on desktop ───
+function ThreeDayGridBlock({
+  block,
+  column,
+  totalColumns,
+  hourHeight,
+  startHour,
+  onEdit,
+}: {
+  block: TimeBlock;
+  column: number;
+  totalColumns: number;
+  hourHeight: number;
+  startHour: number;
+  onEdit?: () => void;
+}) {
+  const { getCategory } = useDayFlow();
+  const cat = getCategory(block.categoryId);
+  const colorKey = cat?.color || "teal";
+
+  const top = (block.startHour - startHour) * hourHeight;
+  const height = Math.max(block.durationHours * hourHeight - 2, 18);
+
+  const widthPercent = 100 / totalColumns;
+  const leftPercent = column * widthPercent;
+
+  const bgClass =
+    block.type === "meal"
+      ? "bg-secondary"
+      : block.type === "break" || block.type === "transition"
+      ? "bg-muted"
+      : CATEGORY_COLOR_BG_MAP[colorKey] || "bg-secondary";
+
+  const typeIcon = block.isFixed ? "📌" : "";
+
+  return (
+    <div
+      className={`absolute rounded-lg px-1.5 py-1 overflow-hidden ${bgClass} ${
+        onEdit ? "cursor-pointer active:opacity-80" : ""
+      }`}
+      style={{
+        top,
+        height,
+        left: totalColumns > 1 ? `${leftPercent}%` : 0,
+        width: totalColumns > 1 ? `${widthPercent}%` : "100%",
+      }}
+      onClick={onEdit}
+    >
+      <p className="text-[10px] font-medium text-foreground truncate leading-tight">
+        {typeIcon} {block.title}
+      </p>
+      {height > 26 && (
+        <p className="text-[9px] text-muted-foreground leading-tight">
+          {formatHour(block.startHour)}
+        </p>
+      )}
+    </div>
+  );
+}
+
 function ThreeDayView({ baseDate, onEditTask }: { baseDate: Date; onEditTask: (taskId: string) => void }) {
+  const isDesktop = useIsDesktop();
+
+  if (isDesktop) {
+    return <ThreeDayGridView baseDate={baseDate} onEditTask={onEditTask} />;
+  }
+  return <ThreeDayCompactView baseDate={baseDate} onEditTask={onEditTask} />;
+}
+
+// ─── Desktop: side-by-side hourly grids ───
+const GRID_START = 8;   // Default visible start
+const GRID_END = 18;    // Default visible end
+const GRID_HOUR_HEIGHT = 48; // Slightly shorter per-hour for 3 columns
+
+function ThreeDayGridView({ baseDate, onEditTask }: { baseDate: Date; onEditTask: (taskId: string) => void }) {
+  const { getBlocksForDate, getCategory } = useDayFlow();
+  const scrollRef = useRef<HTMLDivElement>(null);
+
+  const days = [0, 1, 2].map((offset) => {
+    const d = new Date(baseDate);
+    d.setDate(d.getDate() + offset);
+    return d;
+  });
+
+  const todayStr = new Date().toISOString().split("T")[0];
+  const now = new Date();
+  const currentHour = now.getHours() + now.getMinutes() / 60;
+
+  // Full range is 0-24, but we scroll to show 8-18 by default
+  const fullStartHour = 0;
+  const fullEndHour = 24;
+  const totalHours = fullEndHour - fullStartHour;
+
+  // Auto-scroll to show 8 AM at top (or current time - 1h if today)
+  useEffect(() => {
+    if (scrollRef.current) {
+      const isShowingToday = days.some(d => d.toISOString().split("T")[0] === todayStr);
+      if (isShowingToday) {
+        const scrollTo = Math.max(0, (currentHour - 3)) * GRID_HOUR_HEIGHT;
+        scrollRef.current.scrollTop = scrollTo;
+      } else {
+        scrollRef.current.scrollTop = GRID_START * GRID_HOUR_HEIGHT;
+      }
+    }
+  }, [baseDate.toISOString()]);
+
+  return (
+    <div className="mt-2">
+      {/* Day headers */}
+      <div className="flex gap-1 mb-1">
+        <div className="w-10 shrink-0" /> {/* Gutter for time labels */}
+        {days.map((day) => {
+          const dateStr = day.toISOString().split("T")[0];
+          const isToday = dateStr === todayStr;
+          return (
+            <div
+              key={dateStr}
+              className={`flex-1 text-center rounded-lg py-1.5 ${isToday ? "bg-primary/10" : "bg-secondary"}`}
+            >
+              <p className={`text-[10px] font-semibold ${isToday ? "text-primary" : "text-foreground"}`}>
+                {day.toLocaleDateString("en-US", { weekday: "short" })}
+              </p>
+              <p className={`text-[10px] ${isToday ? "text-primary" : "text-muted-foreground"}`}>
+                {day.toLocaleDateString("en-US", { month: "short", day: "numeric" })}
+              </p>
+            </div>
+          );
+        })}
+      </div>
+
+      {/* Scrollable grid */}
+      <div
+        ref={scrollRef}
+        className="overflow-y-auto"
+        style={{ height: "calc(100vh - 240px)" }}
+      >
+        <div className="flex gap-1" style={{ height: totalHours * GRID_HOUR_HEIGHT }}>
+          {/* Time labels column */}
+          <div className="w-10 shrink-0 relative">
+            {Array.from({ length: totalHours + 1 }, (_, i) => {
+              const hour = fullStartHour + i;
+              const ampm = hour < 12 || hour === 24 ? "AM" : "PM";
+              const display = hour === 0 || hour === 24 ? 12 : hour > 12 ? hour - 12 : hour;
+              return (
+                <div
+                  key={hour}
+                  className="absolute left-0 right-0"
+                  style={{ top: i * GRID_HOUR_HEIGHT }}
+                >
+                  <span className="text-[9px] text-muted-foreground leading-none">
+                    {display}{ampm}
+                  </span>
+                </div>
+              );
+            })}
+          </div>
+
+          {/* Day columns */}
+          {days.map((day) => {
+            const dateStr = day.toISOString().split("T")[0];
+            const blocks = getBlocksForDate(dateStr);
+            const isToday = dateStr === todayStr;
+            const layoutBlocks = computeOverlapLayout(blocks);
+
+            return (
+              <div
+                key={dateStr}
+                className={`flex-1 relative border-l border-border/30 ${
+                  isToday ? "bg-primary/[0.03]" : ""
+                }`}
+              >
+                {/* Hour gridlines */}
+                {Array.from({ length: totalHours }, (_, i) => (
+                  <div
+                    key={i}
+                    className="absolute left-0 right-0 border-t border-border/30"
+                    style={{ top: i * GRID_HOUR_HEIGHT }}
+                  />
+                ))}
+
+                {/* Current time line */}
+                {isToday && (
+                  <div
+                    className="absolute left-0 right-0 z-10 flex items-center"
+                    style={{ top: (currentHour - fullStartHour) * GRID_HOUR_HEIGHT }}
+                  >
+                    <div className="h-1.5 w-1.5 rounded-full bg-primary" />
+                    <div className="flex-1 h-[1px] bg-primary" />
+                  </div>
+                )}
+
+                {/* Blocks */}
+                {layoutBlocks.map(({ block, column, totalColumns }) => (
+                  <ThreeDayGridBlock
+                    key={block.id}
+                    block={block}
+                    column={column}
+                    totalColumns={totalColumns}
+                    hourHeight={GRID_HOUR_HEIGHT}
+                    startHour={fullStartHour}
+                    onEdit={block.taskId ? () => onEditTask(block.taskId!) : undefined}
+                  />
+                ))}
+              </div>
+            );
+          })}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ─── Mobile: compact card list (unchanged) ───
+function ThreeDayCompactView({ baseDate, onEditTask }: { baseDate: Date; onEditTask: (taskId: string) => void }) {
   const { getBlocksForDate, getCategory } = useDayFlow();
 
   const days = [0, 1, 2].map((offset) => {
