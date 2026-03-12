@@ -9,6 +9,7 @@ import {
   Category,
 } from "@/types/dayflow";
 import { loadFromCloud, saveToCloud, clearCloud } from "@/lib/cloud-sync";
+import { toast } from "sonner";
 
 // Simple global state with localStorage persistence + cloud sync
 const STORAGE_KEY = "dayflow-state";
@@ -33,6 +34,40 @@ const defaultPreferences: UserPreferences = {
   defaultTaskDuration: 30,
   categories: DEFAULT_CATEGORIES,
 };
+
+const THIRTY_DAYS_MS = 30 * 24 * 60 * 60 * 1000;
+
+function cleanupStaleData(state: DayFlowState): { state: DayFlowState; cleaned: number } {
+  const cutoff = Date.now() - THIRTY_DAYS_MS;
+  const cutoffDate = new Date(cutoff).toISOString();
+
+  // Remove completed/dropped tasks older than 30 days
+  const before = state.tasks.length;
+  const tasks = state.tasks.filter((t) => {
+    if (t.status !== "completed" && t.status !== "dropped") return true;
+    const doneDate = t.completedAt || t.createdAt;
+    return doneDate > cutoffDate;
+  });
+
+  // Remove orphaned time blocks for deleted tasks
+  const taskIds = new Set(tasks.map((t) => t.id));
+  const timeBlocks = state.timeBlocks.filter(
+    (b) => !b.taskId || taskIds.has(b.taskId)
+  );
+
+  // Prune custom projects with no active tasks for 30+ days
+  const activeProjects = new Set(
+    tasks.filter((t) => t.status === "active" && t.project).map((t) => `${t.categoryId}:${t.project}`)
+  );
+  const customProjects: Record<string, string[]> = {};
+  for (const [catId, projects] of Object.entries(state.customProjects)) {
+    const kept = projects.filter((p) => activeProjects.has(`${catId}:${p}`));
+    if (kept.length > 0) customProjects[catId] = kept;
+  }
+
+  const cleaned = before - tasks.length;
+  return { state: { ...state, tasks, timeBlocks, customProjects }, cleaned };
+}
 
 function loadState(): DayFlowState {
   try {
@@ -116,7 +151,7 @@ export function useDayFlowStore() {
   const [state, setStateRaw] = useState<DayFlowState>(loadState);
   const cloudSaveTimer = useRef<ReturnType<typeof setTimeout>>();
 
-  // Load from cloud on mount — cloud wins if newer
+  // Load from cloud on mount — cloud wins if newer, then run cleanup
   useEffect(() => {
     loadFromCloud<DayFlowState>().then((cloudState) => {
       if (cloudState && (cloudState.lastModified || 0) > (state.lastModified || 0)) {
@@ -124,6 +159,20 @@ export function useDayFlowStore() {
         setStateRaw(merged);
         saveState(merged);
       }
+    }).finally(() => {
+      // Run 30-day cleanup after state is settled
+      setStateRaw((current) => {
+        const { state: cleaned, cleaned: count } = cleanupStaleData(current);
+        if (count > 0) {
+          saveState(cleaned);
+          saveToCloud(cleaned);
+          setTimeout(() => {
+            toast(`Cleaned up ${count} old task${count > 1 ? "s" : ""}`);
+          }, 1000);
+          return cleaned;
+        }
+        return current;
+      });
     });
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
@@ -165,7 +214,11 @@ export function useDayFlowStore() {
       ...s,
       tasks: s.tasks.map((t) =>
         t.id === id
-          ? { ...t, status: t.status === "completed" ? "active" : "completed" }
+          ? {
+              ...t,
+              status: t.status === "completed" ? ("active" as const) : ("completed" as const),
+              completedAt: t.status === "completed" ? undefined : new Date().toISOString(),
+            }
           : t
       ),
     }));
@@ -174,7 +227,11 @@ export function useDayFlowStore() {
   const dropTask = useCallback((id: string) => {
     setState((s) => ({
       ...s,
-      tasks: s.tasks.map((t) => (t.id === id ? { ...t, status: "dropped" as const } : t)),
+      tasks: s.tasks.map((t) =>
+        t.id === id
+          ? { ...t, status: "dropped" as const, completedAt: new Date().toISOString() }
+          : t
+      ),
     }));
   }, [setState]);
 
