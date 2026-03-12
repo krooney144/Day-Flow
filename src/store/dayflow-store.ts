@@ -259,6 +259,10 @@ export function useDayFlowStore() {
     setState((s) => ({ ...s, chatMessages: [...s.chatMessages, msg] }));
   }, [setState]);
 
+  const clearChat = useCallback(() => {
+    setState((s) => ({ ...s, chatMessages: [] }));
+  }, [setState]);
+
   const updatePreferences = useCallback((prefs: Partial<UserPreferences>) => {
     setState((s) => ({ ...s, preferences: { ...s.preferences, ...prefs } }));
   }, [setState]);
@@ -347,6 +351,7 @@ export function useDayFlowStore() {
     deleteTask,
     setTimeBlocks,
     addChatMessage,
+    clearChat,
     updatePreferences,
     setHasSeenRollover,
     getCategory,
