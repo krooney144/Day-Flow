@@ -418,8 +418,8 @@ serve(async (req) => {
 
   try {
     const { messages, currentTasks, preferences, timeBlocks } = await req.json();
-    const LOVABLE_API_KEY = Deno.env.get("LOVABLE_API_KEY");
-    if (!LOVABLE_API_KEY) throw new Error("LOVABLE_API_KEY is not configured");
+    const OPENAI_API_KEY = Deno.env.get("OPENAI_API_KEY");
+    if (!OPENAI_API_KEY) throw new Error("OPENAI_API_KEY is not configured");
 
     const systemPrompt = buildSystemPrompt(
       currentTasks || [],
@@ -428,22 +428,21 @@ serve(async (req) => {
     );
 
     const response = await fetch(
-      "https://ai.gateway.lovable.dev/v1/chat/completions",
+      "https://api.openai.com/v1/chat/completions",
       {
         method: "POST",
         headers: {
-          Authorization: `Bearer ${LOVABLE_API_KEY}`,
+          Authorization: `Bearer ${OPENAI_API_KEY}`,
           "Content-Type": "application/json",
         },
         body: JSON.stringify({
-          model: "google/gemini-2.5-flash",
+          model: "gpt-4o",
           messages: [
             { role: "system", content: systemPrompt },
             ...messages,
           ],
           tools: PLANNER_TOOLS,
           tool_choice: "auto",
-          stream: false,
         }),
       }
     );
@@ -451,7 +450,7 @@ serve(async (req) => {
     if (!response.ok) {
       const status = response.status;
       const text = await response.text();
-      console.error("Gemini API error:", status, text);
+      console.error("OpenAI API error:", status, text);
 
       if (status === 429) {
         return new Response(
