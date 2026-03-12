@@ -299,6 +299,10 @@ export default function TaskDetailSheet({ task, onClose }: Props) {
                       onClick={() => {
                         setEstimatedMinutes(d);
                         autoSave({ estimatedMinutes: d });
+                        // Sync duration to the scheduled time block
+                        if (scheduledBlock) {
+                          updateTimeBlock(scheduledBlock.id, { durationHours: d / 60 });
+                        }
                       }}
                       className={cn(
                         "rounded-lg px-2.5 py-1 text-xs font-medium transition-all",
