@@ -3,7 +3,7 @@ import { motion, AnimatePresence } from "framer-motion";
 import { useDayFlow } from "@/context/DayFlowContext";
 import { Task, CATEGORY_COLOR_MAP, EnergyLevel, TimeOfDay, DEFAULT_PROJECTS, RecurrenceFrequency, RecurrenceRule } from "@/types/dayflow";
 import { mergeProjects } from "@/lib/project-utils";
-import { X, Calendar, Clock, Tag, FileText, Zap, MapPin, Repeat, Timer, FolderOpen, ArrowRight } from "lucide-react";
+import { X, Calendar, Clock, Tag, FileText, Zap, MapPin, Repeat, Timer, FolderOpen, ArrowRight, ArrowLeft, Minus, Plus } from "lucide-react";
 import { format } from "date-fns";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { Calendar as CalendarPicker } from "@/components/ui/calendar";
@@ -21,7 +21,7 @@ const TIME_OPTIONS: TimeOfDay[] = ["morning", "afternoon", "evening", "any"];
 const ENERGY_OPTIONS: EnergyLevel[] = ["low", "medium", "high"];
 
 export default function TaskDetailSheet({ task, onClose }: Props) {
-  const { getCategory, updateTask, dropTask, timeBlocks, preferences, customProjects, moveBlockToDate, recurrenceRules, addRecurrenceRule, deleteRecurrenceRule } = useDayFlow();
+  const { getCategory, updateTask, dropTask, timeBlocks, preferences, customProjects, moveBlockToDate, updateTimeBlock, recurrenceRules, addRecurrenceRule, deleteRecurrenceRule } = useDayFlow();
 
   const [title, setTitle] = useState("");
   const [notes, setNotes] = useState("");
@@ -164,29 +164,13 @@ export default function TaskDetailSheet({ task, onClose }: Props) {
             </div>
 
             <div className="space-y-5">
-              {/* Scheduled Time (read-only) */}
+              {/* Scheduled Time — editable */}
               {scheduledBlock && (
-                <div className="flex items-center gap-3 rounded-xl bg-primary/10 p-3">
-                  <Timer className="h-4 w-4 text-primary" />
-                  <div className="flex-1">
-                    <span className="text-xs text-muted-foreground font-medium">Scheduled — {scheduledBlock.date}</span>
-                    <p className="text-sm text-foreground font-medium">
-                      {formatHour(scheduledBlock.startHour)} – {formatHour(scheduledBlock.startHour + scheduledBlock.durationHours)}
-                    </p>
-                  </div>
-                  {!scheduledBlock.isFixed && (
-                    <button
-                      onClick={() => {
-                        const tomorrow = new Date();
-                        tomorrow.setDate(tomorrow.getDate() + 1);
-                        moveBlockToDate(scheduledBlock.id, tomorrow.toISOString().split("T")[0]);
-                      }}
-                      className="flex items-center gap-1 rounded-lg bg-secondary px-2.5 py-1.5 text-xs font-medium text-muted-foreground active:bg-border transition-colors"
-                    >
-                      <ArrowRight className="h-3 w-3" /> Tomorrow
-                    </button>
-                  )}
-                </div>
+                <ScheduledTimeSection
+                  block={scheduledBlock}
+                  onUpdateTime={(startHour) => updateTimeBlock(scheduledBlock.id, { startHour })}
+                  onMoveToDate={(dateStr) => moveBlockToDate(scheduledBlock.id, dateStr)}
+                />
               )}
 
               {/* Deadline */}
@@ -417,6 +401,114 @@ export default function TaskDetailSheet({ task, onClose }: Props) {
         </>
       )}
     </AnimatePresence>
+  );
+}
+
+function formatBlockDate(dateStr: string): string {
+  const d = new Date(dateStr + "T12:00:00");
+  return d.toLocaleDateString("en-US", { weekday: "short", month: "numeric", day: "numeric", year: "2-digit" });
+}
+
+function ScheduledTimeSection({
+  block,
+  onUpdateTime,
+  onMoveToDate,
+}: {
+  block: { id: string; date: string; startHour: number; durationHours: number; isFixed: boolean };
+  onUpdateTime: (startHour: number) => void;
+  onMoveToDate: (dateStr: string) => void;
+}) {
+  const [showDatePicker, setShowDatePicker] = useState(false);
+  const todayStr = new Date().toISOString().split("T")[0];
+  const isToday = block.date === todayStr;
+
+  const adjustTime = (delta: number) => {
+    const newHour = Math.max(0, Math.min(23.75, block.startHour + delta));
+    onUpdateTime(newHour);
+  };
+
+  const moveByDays = (days: number) => {
+    const d = new Date(block.date + "T12:00:00");
+    d.setDate(d.getDate() + days);
+    onMoveToDate(d.toISOString().split("T")[0]);
+  };
+
+  return (
+    <div className="rounded-xl bg-primary/10 p-3 space-y-2.5">
+      {/* Date row */}
+      <div className="flex items-center gap-2">
+        <Timer className="h-4 w-4 text-primary shrink-0" />
+        <span className="text-xs text-muted-foreground font-medium">Scheduled</span>
+        <span className="text-sm text-foreground font-medium ml-auto">
+          {formatBlockDate(block.date)}
+        </span>
+      </div>
+
+      {/* Time editor */}
+      <div className="flex items-center gap-2">
+        <button
+          onClick={() => adjustTime(-0.25)}
+          className="flex h-7 w-7 items-center justify-center rounded-lg bg-secondary text-foreground active:bg-muted transition-colors"
+        >
+          <Minus className="h-3.5 w-3.5" />
+        </button>
+        <div className="flex-1 text-center">
+          <p className="text-sm text-foreground font-medium">
+            {formatHour(block.startHour)} – {formatHour(block.startHour + block.durationHours)}
+          </p>
+        </div>
+        <button
+          onClick={() => adjustTime(0.25)}
+          className="flex h-7 w-7 items-center justify-center rounded-lg bg-secondary text-foreground active:bg-muted transition-colors"
+        >
+          <Plus className="h-3.5 w-3.5" />
+        </button>
+      </div>
+
+      {/* Move buttons */}
+      <div className="flex gap-1.5">
+        {!isToday && (
+          <button
+            onClick={() => onMoveToDate(todayStr)}
+            className="flex items-center gap-1 rounded-lg bg-secondary px-2.5 py-1.5 text-xs font-medium text-muted-foreground active:bg-border transition-colors"
+          >
+            <ArrowLeft className="h-3 w-3" /> Today
+          </button>
+        )}
+        <button
+          onClick={() => moveByDays(-1)}
+          className="flex items-center gap-1 rounded-lg bg-secondary px-2.5 py-1.5 text-xs font-medium text-muted-foreground active:bg-border transition-colors"
+        >
+          <ArrowLeft className="h-3 w-3" /> Prev day
+        </button>
+        <button
+          onClick={() => moveByDays(1)}
+          className="flex items-center gap-1 rounded-lg bg-secondary px-2.5 py-1.5 text-xs font-medium text-muted-foreground active:bg-border transition-colors"
+        >
+          Next day <ArrowRight className="h-3 w-3" />
+        </button>
+        <Popover>
+          <PopoverTrigger asChild>
+            <button className="flex items-center gap-1 rounded-lg bg-secondary px-2.5 py-1.5 text-xs font-medium text-muted-foreground active:bg-border transition-colors ml-auto">
+              <Calendar className="h-3 w-3" /> Pick
+            </button>
+          </PopoverTrigger>
+          <PopoverContent className="w-auto p-0" align="end">
+            <CalendarPicker
+              mode="single"
+              selected={new Date(block.date + "T12:00:00")}
+              onSelect={(d) => {
+                if (d) {
+                  onMoveToDate(d.toISOString().split("T")[0]);
+                }
+              }}
+              initialFocus
+              className={cn("p-3 pointer-events-auto")}
+            />
+          </PopoverContent>
+        </Popover>
+      </div>
+    </div>
   );
 }
 

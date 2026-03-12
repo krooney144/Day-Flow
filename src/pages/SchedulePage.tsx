@@ -109,9 +109,30 @@ export default function SchedulePage() {
 
       {/* Content */}
       <div className="flex-1 overflow-y-auto px-4 pb-24">
-        {view === "day" && <DayView dateStr={dateStr} onEditTask={handleEditTask} />}
+        {view === "day" && (
+          <DayView
+            dateStr={dateStr}
+            onEditTask={handleEditTask}
+            onSwipePrev={() => setDateOffset((d) => d - 1)}
+            onSwipeNext={() => setDateOffset((d) => d + 1)}
+          />
+        )}
         {view === "3day" && <ThreeDayView baseDate={currentDate} onEditTask={handleEditTask} />}
-        {view === "week" && <WeekView baseDate={currentDate} onEditTask={handleEditTask} />}
+        {view === "week" && (
+          <WeekView
+            baseDate={currentDate}
+            onEditTask={handleEditTask}
+            onNavigateToDay={(d) => {
+              const today = new Date();
+              today.setHours(0, 0, 0, 0);
+              const target = new Date(d);
+              target.setHours(0, 0, 0, 0);
+              const diff = Math.round((target.getTime() - today.getTime()) / (1000 * 60 * 60 * 24));
+              setDateOffset(diff);
+              setView("day");
+            }}
+          />
+        )}
       </div>
 
       {/* Task Detail Sheet */}
@@ -175,7 +196,12 @@ function getScrollForCurrentTime(containerHeight: number): number {
   return targetTopHour * HOUR_HEIGHT;
 }
 
-function DayView({ dateStr, onEditTask }: { dateStr: string; onEditTask: (taskId: string) => void }) {
+function DayView({ dateStr, onEditTask, onSwipePrev, onSwipeNext }: {
+  dateStr: string;
+  onEditTask: (taskId: string) => void;
+  onSwipePrev: () => void;
+  onSwipeNext: () => void;
+}) {
   const { getBlocksForDate, getCategory, toggleTaskComplete, tasks, updateTimeBlock, moveBlockToDate, displaceBlock } = useDayFlow();
   const blocks = getBlocksForDate(dateStr);
   const now = new Date();
@@ -219,6 +245,29 @@ function DayView({ dateStr, onEditTask }: { dateStr: string; onEditTask: (taskId
     return () => { cleanupRef.current?.(); };
   }, []);
 
+  // Swipe detection for day navigation
+  const swipeStartRef = useRef<{ x: number; y: number; t: number } | null>(null);
+
+  const handleTouchStart = useCallback((e: React.TouchEvent) => {
+    const touch = e.touches[0];
+    swipeStartRef.current = { x: touch.clientX, y: touch.clientY, t: Date.now() };
+  }, []);
+
+  const handleTouchEnd = useCallback((e: React.TouchEvent) => {
+    if (!swipeStartRef.current) return;
+    const touch = e.changedTouches[0];
+    const dx = touch.clientX - swipeStartRef.current.x;
+    const dy = touch.clientY - swipeStartRef.current.y;
+    const dt = Date.now() - swipeStartRef.current.t;
+    swipeStartRef.current = null;
+
+    // Only trigger if horizontal swipe is dominant and fast enough
+    if (Math.abs(dx) > 60 && Math.abs(dx) > Math.abs(dy) * 1.5 && dt < 400) {
+      if (dx > 0) onSwipePrev();
+      else onSwipeNext();
+    }
+  }, [onSwipePrev, onSwipeNext]);
+
   const handlePointerDown = useCallback((blockId: string, e: React.PointerEvent) => {
     if (blocks.find(b => b.id === blockId)?.isFixed) return;
     e.preventDefault();
@@ -260,7 +309,13 @@ function DayView({ dateStr, onEditTask }: { dateStr: string; onEditTask: (taskId
   }, [blocks, getHourFromPointer, updateTimeBlock, displaceBlock]);
 
   return (
-    <div ref={scrollRef} className="relative mt-2 overflow-y-auto" style={{ height: "calc(100vh - 200px)" }}>
+    <div
+      ref={scrollRef}
+      className="relative mt-2 overflow-y-auto"
+      style={{ height: "calc(100vh - 200px)" }}
+      onTouchStart={handleTouchStart}
+      onTouchEnd={handleTouchEnd}
+    >
       <div ref={containerRef} className="relative select-none" style={{ height: (END_HOUR - START_HOUR) * HOUR_HEIGHT }}>
         {/* Hour lines */}
         {Array.from({ length: END_HOUR - START_HOUR + 1 }, (_, i) => {
@@ -751,7 +806,11 @@ function ThreeDayCompactView({ baseDate, onEditTask }: { baseDate: Date; onEditT
   );
 }
 
-function WeekView({ baseDate, onEditTask }: { baseDate: Date; onEditTask: (taskId: string) => void }) {
+function WeekView({ baseDate, onEditTask, onNavigateToDay }: {
+  baseDate: Date;
+  onEditTask: (taskId: string) => void;
+  onNavigateToDay: (date: Date) => void;
+}) {
   const { getBlocksForDate, getCategory } = useDayFlow();
 
   // Start from current day (rolling 7-day window)
@@ -770,16 +829,20 @@ function WeekView({ baseDate, onEditTask }: { baseDate: Date; onEditTask: (taskI
         return (
           <div
             key={dateStr}
-            className={`surface-card p-3 ${isToday ? "ring-1 ring-primary/30" : ""}`}
+            className={`surface-card p-3 cursor-pointer active:opacity-90 transition-opacity ${isToday ? "ring-1 ring-primary/30" : ""}`}
+            onClick={() => onNavigateToDay(day)}
           >
-            <p
-              className={`text-xs font-semibold mb-1.5 ${
-                isToday ? "text-primary" : "text-foreground"
-              }`}
-            >
-              {day.toLocaleDateString("en-US", { weekday: "long", month: "short", day: "numeric" })}
-              {isToday && <span className="ml-2 text-primary text-meta">Today</span>}
-            </p>
+            <div className="flex items-center justify-between mb-1.5">
+              <p
+                className={`text-xs font-semibold ${
+                  isToday ? "text-primary" : "text-foreground"
+                }`}
+              >
+                {day.toLocaleDateString("en-US", { weekday: "long", month: "short", day: "numeric" })}
+                {isToday && <span className="ml-2 text-primary text-meta">Today</span>}
+              </p>
+              <ChevronRight className="h-3.5 w-3.5 text-muted-foreground opacity-40" />
+            </div>
             {blocks.length === 0 ? (
               <p className="text-xs text-muted-foreground">No tasks scheduled</p>
             ) : (
@@ -790,8 +853,13 @@ function WeekView({ baseDate, onEditTask }: { baseDate: Date; onEditTask: (taskI
                   return (
                     <div
                       key={block.id}
-                      className={`flex items-center gap-2 ${block.taskId ? "cursor-pointer active:opacity-80" : ""}`}
-                      onClick={block.taskId ? () => onEditTask(block.taskId!) : undefined}
+                      className="flex items-center gap-2"
+                      onClick={(e) => {
+                        if (block.taskId) {
+                          e.stopPropagation();
+                          onEditTask(block.taskId);
+                        }
+                      }}
                     >
                       <div className={`cat-dot ${dotClass}`} />
                       <span className="text-xs text-foreground truncate">{block.title}</span>

@@ -2,14 +2,14 @@ import { useState, useMemo } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import { useDayFlow } from "@/context/DayFlowContext";
 import { Task, CATEGORY_COLOR_MAP, CATEGORY_COLOR_BG_MAP, CATEGORY_TEXT_COLOR_MAP } from "@/types/dayflow";
-import { Plus, Check, CheckCircle2, ChevronDown } from "lucide-react";
+import { Plus, Check, CheckCircle2, ChevronDown, Pin } from "lucide-react";
 import { formatHour } from "@/lib/utils";
 import TaskDetailSheet from "@/components/dayflow/TaskDetailSheet";
 import QuickAddTask from "@/components/dayflow/QuickAddTask";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { useTaskScheduleSync } from "@/hooks/useTaskScheduleSync";
 
-type TabView = "active" | "completed";
+type TabView = "active" | "fixed" | "completed";
 type SortMode = "priority" | "category" | "manual";
 
 const SORT_LABELS: Record<SortMode, string> = {
@@ -27,21 +27,52 @@ export default function TasksPage() {
   const [sortBy, setSortBy] = useState<SortMode>("priority");
   const [tabView, setTabView] = useState<TabView>("active");
 
-  const filtered = useMemo(() => {
-    const isCompleted = tabView === "completed";
-    let list = tasks.filter((t) => {
-      if (t.status === "dropped") return false;
-      return isCompleted ? t.status === "completed" : t.status === "active";
+  const { timeBlocks: allTimeBlocks } = useDayFlow();
+
+  // Compute which tasks have fixed blocks in the next 14 days
+  const fixedTaskIds = useMemo(() => {
+    const today = new Date();
+    const twoWeeksOut = new Date();
+    twoWeeksOut.setDate(today.getDate() + 14);
+    const todayStr = today.toISOString().split("T")[0];
+    const cutoffStr = twoWeeksOut.toISOString().split("T")[0];
+    const ids = new Set<string>();
+    allTimeBlocks.forEach((b) => {
+      if (b.isFixed && b.taskId && b.date >= todayStr && b.date <= cutoffStr) {
+        ids.add(b.taskId);
+      }
     });
+    return ids;
+  }, [allTimeBlocks]);
+
+  const filtered = useMemo(() => {
+    if (tabView === "completed") {
+      let list = tasks.filter((t) => t.status === "completed" && t.status !== "dropped");
+      if (filterCat) list = list.filter((t) => t.categoryId === filterCat);
+      return list;
+    }
+    if (tabView === "fixed") {
+      let list = tasks.filter((t) => t.status === "active" && fixedTaskIds.has(t.id));
+      if (filterCat) list = list.filter((t) => t.categoryId === filterCat);
+      // Sort by scheduled date
+      list.sort((a, b) => {
+        const blockA = allTimeBlocks.find((bl) => bl.taskId === a.id);
+        const blockB = allTimeBlocks.find((bl) => bl.taskId === b.id);
+        if (!blockA || !blockB) return 0;
+        return blockA.date.localeCompare(blockB.date) || blockA.startHour - blockB.startHour;
+      });
+      return list;
+    }
+    // active tab
+    let list = tasks.filter((t) => t.status === "active" && t.status !== "dropped");
     if (filterCat) list = list.filter((t) => t.categoryId === filterCat);
     if (sortBy === "priority") {
       list.sort((a, b) => a.priority - b.priority);
     } else if (sortBy === "category") {
       list.sort((a, b) => a.categoryId.localeCompare(b.categoryId));
     }
-    // manual = insertion order, no sort
     return list;
-  }, [tasks, filterCat, sortBy, tabView]);
+  }, [tasks, filterCat, sortBy, tabView, fixedTaskIds, allTimeBlocks]);
 
   const completedCount = useMemo(() => tasks.filter(t => t.status === "completed").length, [tasks]);
 
@@ -74,7 +105,7 @@ export default function TasksPage() {
           </Popover>
         </div>
 
-        {/* Active / Completed toggle */}
+        {/* Active / Fixed / Completed toggle */}
         <div className="flex gap-1 rounded-xl bg-secondary p-1 mb-3">
           <button
             onClick={() => setTabView("active")}
@@ -83,6 +114,15 @@ export default function TasksPage() {
             }`}
           >
             Active
+          </button>
+          <button
+            onClick={() => setTabView("fixed")}
+            className={`flex-1 rounded-lg py-1.5 text-xs font-medium transition-all flex items-center justify-center gap-1.5 ${
+              tabView === "fixed" ? "bg-card text-foreground shadow-sm" : "text-muted-foreground"
+            }`}
+          >
+            <Pin className="h-3 w-3" />
+            Fixed{fixedTaskIds.size > 0 && ` (${fixedTaskIds.size})`}
           </button>
           <button
             onClick={() => setTabView("completed")}
@@ -145,10 +185,10 @@ export default function TasksPage() {
         {filtered.length === 0 && (
           <div className="flex flex-col items-center justify-center py-16">
             <p className="text-sm text-muted-foreground">
-              {tabView === "completed" ? "No completed tasks yet" : "No tasks yet"}
+              {tabView === "completed" ? "No completed tasks yet" : tabView === "fixed" ? "No fixed tasks in the next 2 weeks" : "No tasks yet"}
             </p>
             <p className="text-xs text-muted-foreground mt-1">
-              {tabView === "active" ? "Tap + to add one, or use the Planner" : "Complete tasks to see them here"}
+              {tabView === "active" ? "Tap + to add one, or use the Planner" : tabView === "fixed" ? "Meetings and pinned events show here" : "Complete tasks to see them here"}
             </p>
           </div>
         )}
@@ -223,7 +263,10 @@ function TaskRow({
         </p>
         {scheduledBlock && (
           <p className="text-[10px] text-muted-foreground mt-0.5">
+            {new Date(scheduledBlock.date + "T12:00:00").toLocaleDateString("en-US", { weekday: "short", month: "numeric", day: "numeric" })}
+            {" "}
             {formatHour(scheduledBlock.startHour)} – {formatHour(scheduledBlock.startHour + scheduledBlock.durationHours)}
+            {scheduledBlock.isFixed && " 📌"}
           </p>
         )}
       </div>
