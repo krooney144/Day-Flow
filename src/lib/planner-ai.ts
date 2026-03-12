@@ -1,5 +1,5 @@
 import { Task, TimeBlock, UserPreferences, ChatMessage } from "@/types/dayflow";
-import { findNextAvailableSlot } from "@/lib/scheduling-utils";
+import { findNextAvailableSlot, resolveOverlaps } from "@/lib/scheduling-utils";
 
 const CHAT_URL = "/api/planner-chat";
 
@@ -70,6 +70,7 @@ export function executeToolCalls(
     addTimeBlocks: (blocks: TimeBlock[]) => void;
     updatePreferences: (prefs: Partial<UserPreferences>) => void;
     addProject: (categoryId: string, projectName: string) => void;
+    moveBlockToDate: (blockId: string, newDate: string) => void;
     preferences?: UserPreferences;
   },
   existingTimeBlocks: TimeBlock[] = []
@@ -160,6 +161,14 @@ export function executeToolCalls(
           ...allBlocks.filter((b) => b.date !== targetDate),
           ...newBlocks,
         ];
+
+        // Resolve any overlaps within the generated schedule
+        for (const block of newBlocks) {
+          if (block.isFixed) {
+            allBlocks = resolveOverlaps(allBlocks, block.id);
+          }
+        }
+
         store.setTimeBlocks(allBlocks);
         const dateLabel = targetDate === today ? "today" : targetDate;
         summaries.push(`Generated schedule for ${dateLabel}`);
@@ -189,6 +198,19 @@ export function executeToolCalls(
         store.addTimeBlock(block);
         allBlocks.push(block);
         summaries.push(`Added ${tc.arguments.type || "break"}`);
+        break;
+      }
+      case "move_blocks_to_date": {
+        const moves: { blockId: string; targetDate: string }[] = tc.arguments.moves;
+        for (const move of moves) {
+          store.moveBlockToDate(move.blockId, move.targetDate);
+          // Update allBlocks tracking
+          const idx = allBlocks.findIndex((b) => b.id === move.blockId);
+          if (idx !== -1) {
+            allBlocks[idx] = { ...allBlocks[idx], date: move.targetDate };
+          }
+        }
+        summaries.push(`Moved ${moves.length} block${moves.length > 1 ? "s" : ""}`);
         break;
       }
     }

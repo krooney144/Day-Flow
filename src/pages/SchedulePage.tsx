@@ -2,7 +2,7 @@ import { useState, useMemo, useRef, useCallback, useEffect } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import { useDayFlow } from "@/context/DayFlowContext";
 import { CATEGORY_COLOR_MAP, CATEGORY_COLOR_BG_MAP, TimeBlock } from "@/types/dayflow";
-import { ChevronLeft, ChevronRight, Check } from "lucide-react";
+import { ChevronLeft, ChevronRight, Check, ArrowRight } from "lucide-react";
 import { formatHour } from "@/lib/utils";
 
 const HOUR_HEIGHT = 64; // px per hour
@@ -141,7 +141,7 @@ function snapToGrid(hour: number): number {
 }
 
 function DayView({ dateStr }: { dateStr: string }) {
-  const { getBlocksForDate, getCategory, toggleTaskComplete, tasks, updateTimeBlock } = useDayFlow();
+  const { getBlocksForDate, getCategory, toggleTaskComplete, tasks, updateTimeBlock, moveBlockToDate, displaceBlock } = useDayFlow();
   const blocks = getBlocksForDate(dateStr);
   const now = new Date();
   const currentHour = now.getHours() + now.getMinutes() / 60;
@@ -200,6 +200,8 @@ function DayView({ dateStr }: { dateStr: string }) {
       if (block) {
         const clamped = Math.max(START_HOUR, Math.min(END_HOUR - block.durationHours, h));
         updateTimeBlock(blockId, { startHour: clamped });
+        // Displace any blocks that now overlap with the moved block
+        displaceBlock(blockId);
       }
       setDraggingId(null);
       setDragPreviewHour(null);
@@ -281,6 +283,11 @@ function DayView({ dateStr }: { dateStr: string }) {
           isDragging={draggingId === block.id}
           dragPreviewHour={draggingId === block.id ? dragPreviewHour : null}
           onPointerDown={(e) => handlePointerDown(block.id, e)}
+          onMoveToTomorrow={!block.isFixed ? () => {
+            const tomorrow = new Date();
+            tomorrow.setDate(tomorrow.getDate() + 1);
+            moveBlockToDate(block.id, tomorrow.toISOString().split("T")[0]);
+          } : undefined}
         />
       ))}
     </div>
@@ -296,6 +303,7 @@ function ScheduleBlock({
   isDragging,
   dragPreviewHour,
   onPointerDown,
+  onMoveToTomorrow,
 }: {
   block: TimeBlock;
   column: number;
@@ -305,6 +313,7 @@ function ScheduleBlock({
   isDragging: boolean;
   dragPreviewHour: number | null;
   onPointerDown: (e: React.PointerEvent) => void;
+  onMoveToTomorrow?: () => void;
 }) {
   const { getCategory } = useDayFlow();
   const cat = getCategory(block.categoryId);
@@ -375,10 +384,24 @@ function ScheduleBlock({
           )}
         </div>
         {!block.isFixed && (
-          <div className="flex flex-col gap-0.5 opacity-30 mt-1">
-            <div className="h-[2px] w-3 rounded bg-muted-foreground" />
-            <div className="h-[2px] w-3 rounded bg-muted-foreground" />
-            <div className="h-[2px] w-3 rounded bg-muted-foreground" />
+          <div className="flex items-center gap-1">
+            {onMoveToTomorrow && (
+              <button
+                aria-label="Move to tomorrow"
+                onClick={(e) => {
+                  e.stopPropagation();
+                  onMoveToTomorrow();
+                }}
+                className="flex items-center justify-center rounded-lg p-1 opacity-40 hover:opacity-100 active:bg-secondary/50 transition-opacity"
+              >
+                <ArrowRight className="h-3 w-3 text-muted-foreground" />
+              </button>
+            )}
+            <div className="flex flex-col gap-0.5 opacity-30 mt-1">
+              <div className="h-[2px] w-3 rounded bg-muted-foreground" />
+              <div className="h-[2px] w-3 rounded bg-muted-foreground" />
+              <div className="h-[2px] w-3 rounded bg-muted-foreground" />
+            </div>
           </div>
         )}
       </div>

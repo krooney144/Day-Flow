@@ -3,7 +3,7 @@ import { motion, AnimatePresence } from "framer-motion";
 import { useDayFlow } from "@/context/DayFlowContext";
 import { Task, CATEGORY_COLOR_MAP, EnergyLevel, TimeOfDay, DEFAULT_PROJECTS } from "@/types/dayflow";
 import { mergeProjects } from "@/lib/project-utils";
-import { X, Calendar, Clock, Tag, FileText, Zap, MapPin, Repeat, Timer, FolderOpen } from "lucide-react";
+import { X, Calendar, Clock, Tag, FileText, Zap, MapPin, Repeat, Timer, FolderOpen, ArrowRight } from "lucide-react";
 import { format } from "date-fns";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { Calendar as CalendarPicker } from "@/components/ui/calendar";
@@ -20,7 +20,7 @@ const TIME_OPTIONS: TimeOfDay[] = ["morning", "afternoon", "evening", "any"];
 const ENERGY_OPTIONS: EnergyLevel[] = ["low", "medium", "high"];
 
 export default function TaskDetailSheet({ task, onClose }: Props) {
-  const { getCategory, updateTask, dropTask, timeBlocks, preferences, customProjects } = useDayFlow();
+  const { getCategory, updateTask, dropTask, timeBlocks, preferences, customProjects, moveBlockToDate } = useDayFlow();
 
   const [estimatedMinutes, setEstimatedMinutes] = useState(30);
   const [title, setTitle] = useState("");
@@ -125,12 +125,24 @@ export default function TaskDetailSheet({ task, onClose }: Props) {
               {scheduledBlock && (
                 <div className="flex items-center gap-3 rounded-xl bg-primary/10 p-3">
                   <Timer className="h-4 w-4 text-primary" />
-                  <div>
-                    <span className="text-xs text-muted-foreground font-medium">Scheduled</span>
+                  <div className="flex-1">
+                    <span className="text-xs text-muted-foreground font-medium">Scheduled — {scheduledBlock.date}</span>
                     <p className="text-sm text-foreground font-medium">
                       {formatHour(scheduledBlock.startHour)} – {formatHour(scheduledBlock.startHour + scheduledBlock.durationHours)}
                     </p>
                   </div>
+                  {!scheduledBlock.isFixed && (
+                    <button
+                      onClick={() => {
+                        const tomorrow = new Date();
+                        tomorrow.setDate(tomorrow.getDate() + 1);
+                        moveBlockToDate(scheduledBlock.id, tomorrow.toISOString().split("T")[0]);
+                      }}
+                      className="flex items-center gap-1 rounded-lg bg-secondary px-2.5 py-1.5 text-xs font-medium text-muted-foreground active:bg-border transition-colors"
+                    >
+                      <ArrowRight className="h-3 w-3" /> Tomorrow
+                    </button>
+                  )}
                 </div>
               )}
 

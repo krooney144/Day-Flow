@@ -239,6 +239,39 @@ const PLANNER_TOOLS = [
       },
     },
   },
+  {
+    type: "function",
+    function: {
+      name: "move_blocks_to_date",
+      description:
+        "Move one or more existing time blocks to a different date. Use this instead of regenerating the entire schedule when tasks just need to shift between days. Overlaps on the target date are automatically resolved — displaced blocks get pushed to the next available slot.",
+      parameters: {
+        type: "object",
+        properties: {
+          moves: {
+            type: "array",
+            items: {
+              type: "object",
+              properties: {
+                blockId: {
+                  type: "string",
+                  description: "The ID of the time block to move (from the schedule context)",
+                },
+                targetDate: {
+                  type: "string",
+                  description: "The new date in YYYY-MM-DD format",
+                },
+              },
+              required: ["blockId", "targetDate"],
+              additionalProperties: false,
+            },
+          },
+        },
+        required: ["moves"],
+        additionalProperties: false,
+      },
+    },
+  },
 ];
 
 const DEFAULT_PROJECTS = {
@@ -315,7 +348,7 @@ For TOMORROW and all future dates: schedule freely within work hours (${workStar
       const dateLabel = date === today ? `Today (${date})` : `${dayNames[new Date(date + "T12:00:00").getDay()]} (${date})`;
       scheduleSection += `\n${dateLabel}:\n`;
       scheduleSection += blocks
-        .map((b) => `- ${b.startHour}:00 ${b.title} (${b.type}, ${b.durationHours}h${b.taskId ? `, task: ${b.taskId}` : ""})`)
+        .map((b) => `- [${b.id}] ${b.startHour}:00 ${b.title} (${b.type}, ${b.durationHours}h${b.taskId ? `, task: ${b.taskId}` : ""}${b.isFixed ? ", FIXED" : ""})`)
         .join("\n");
       scheduleSection += "\n";
     }
@@ -474,6 +507,15 @@ Unless the task is truly critical.
 - When creating tasks, always set the project field based on context clues. If unsure, ask.
 - When creating tasks, decide the horizon based on context: urgent/today mentions → "today", next few days → "soon", this week → "this-week", vague/someday → "backlog"
 - When the user asks to schedule something for a specific date (e.g. "Thursday", "next week"), use the date reference above to find the exact YYYY-MM-DD and call generate_schedule with that date
+
+== BLOCK MOVEMENT & OVERLAP RULES ==
+
+- To move existing blocks between days, use move_blocks_to_date instead of regenerating the entire schedule. This preserves block structure and just changes the date.
+- When the user adds a new fixed event (e.g. "I have a meeting at 2pm"), and it overlaps an existing work block, the existing block will be automatically displaced to the next available slot. Just create the new event block with generate_schedule or add_buffer_block.
+- When redistributing tasks across multiple days, prefer move_blocks_to_date for existing blocks rather than deleting and recreating them.
+- Each block in the schedule context has an ID in square brackets [block-id] — use these IDs with move_blocks_to_date.
+- Fixed blocks (marked FIXED) cannot be moved. Only move non-fixed blocks.
+- Overlaps are resolved automatically: when a block moves to a date where it would overlap, the overlapping block gets pushed to the next available time slot.
 
 == TONE ==
 
