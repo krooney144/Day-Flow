@@ -246,12 +246,14 @@ export function executeToolCalls(
       const isToday = targetDate === today;
       const minHour = isToday ? currentHour : undefined;
       const durationHours = (task.estimatedMinutes || 30) / 60;
+      const catWindow = store.preferences?.categories?.find((c) => c.id === task.categoryId)?.schedulingWindow;
       const startHour = findNextAvailableSlot(
         allBlocks,
         durationHours,
         task.preferredTime,
         targetDate,
-        minHour
+        minHour,
+        catWindow
       );
       allBlocks.push({
         id: `b-auto-${task.id}`,
@@ -283,12 +285,14 @@ export function executeToolCalls(
       const isToday = targetDate === today;
       const minHour = isToday ? currentHour : undefined;
       const durationHours = (task.estimatedMinutes || 30) / 60;
+      const catWindow2 = store.preferences?.categories?.find((c) => c.id === task.categoryId)?.schedulingWindow;
       const startHour = findNextAvailableSlot(
         [...allBlocks, ...autoBlocks],
         durationHours,
         task.preferredTime,
         targetDate,
-        minHour
+        minHour,
+        catWindow2
       );
       const block: TimeBlock = {
         id: `b-auto-${task.id}`,

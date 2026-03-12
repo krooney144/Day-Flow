@@ -7,8 +7,10 @@ import {
   UserPreferences,
   DEFAULT_CATEGORIES,
   Category,
+  RecurrenceRule,
 } from "@/types/dayflow";
 import { resolveOverlaps } from "@/lib/scheduling-utils";
+import { generateRecurringInstances, cleanupOldRecurringInstances } from "@/lib/recurrence-utils";
 import {
   loadFromCloud,
   saveToCloud,
@@ -25,6 +27,7 @@ interface DayFlowState {
   timeBlocks: TimeBlock[];
   chatMessages: ChatMessage[];
   preferences: UserPreferences;
+  recurrenceRules: RecurrenceRule[];
   hasSeenRollover: boolean;
   lastOpenDate: string;
   customProjects: Record<string, string[]>;
@@ -37,7 +40,19 @@ const defaultPreferences: UserPreferences = {
   lunchHour: 12,
   workoutTime: "morning",
   defaultTaskDuration: 30,
-  categories: DEFAULT_CATEGORIES,
+  includeBreaks: true,
+  protectMealTimes: true,
+  categories: DEFAULT_CATEGORIES.map((c) => ({
+    ...c,
+    schedulingWindow:
+      c.id === "work"
+        ? { startHour: 8, endHour: 18 }
+        : c.id === "school"
+        ? { startHour: 7, endHour: 22 }
+        : c.id === "social"
+        ? { startHour: 9, endHour: 23 }
+        : { startHour: 7, endHour: 21 }, // life-admin
+  })),
 };
 
 const THIRTY_DAYS_MS = 30 * 24 * 60 * 60 * 1000;
@@ -91,6 +106,7 @@ function getDefaultState(): DayFlowState {
     timeBlocks: [],
     chatMessages: [],
     preferences: defaultPreferences,
+    recurrenceRules: [],
     hasSeenRollover: false,
     lastOpenDate: "",
     customProjects: {},
@@ -164,6 +180,26 @@ export function useDayFlowStore() {
             return cleaned;
           }
           return current;
+        });
+
+        // Generate recurring task instances for the rolling window
+        setStateRaw((current) => {
+          if (current.recurrenceRules.length === 0) return current;
+          const { newTasks, newBlocks } = generateRecurringInstances(
+            current.recurrenceRules,
+            current.tasks,
+            current.timeBlocks,
+            current.preferences.categories
+          );
+          if (newTasks.length === 0) return current;
+          const cleaned = cleanupOldRecurringInstances(
+            [...current.tasks, ...newTasks],
+            [...current.timeBlocks, ...newBlocks]
+          );
+          const next = { ...current, tasks: cleaned.tasks, timeBlocks: cleaned.timeBlocks, lastModified: Date.now() };
+          saveState(next);
+          saveToCloud(next);
+          return next;
         });
       });
 
@@ -438,6 +474,51 @@ export function useDayFlowStore() {
     });
   }, [setState]);
 
+  // --- Recurrence ---
+  const addRecurrenceRule = useCallback((rule: RecurrenceRule) => {
+    setState((s) => ({ ...s, recurrenceRules: [...s.recurrenceRules, rule] }));
+  }, [setState]);
+
+  const updateRecurrenceRule = useCallback((id: string, updates: Partial<RecurrenceRule>) => {
+    setState((s) => ({
+      ...s,
+      recurrenceRules: s.recurrenceRules.map((r) => (r.id === id ? { ...r, ...updates } : r)),
+    }));
+  }, [setState]);
+
+  const deleteRecurrenceRule = useCallback((id: string) => {
+    setState((s) => ({
+      ...s,
+      recurrenceRules: s.recurrenceRules.filter((r) => r.id !== id),
+      // Also remove future pending instances of this rule
+      tasks: s.tasks.filter((t) => {
+        if (t.recurringRuleId !== id) return true;
+        // Keep completed instances, remove active/pending ones in the future
+        if (t.status === "completed") return true;
+        return false;
+      }),
+    }));
+  }, [setState]);
+
+  const generateRecurrences = useCallback(() => {
+    setState((s) => {
+      if (s.recurrenceRules.length === 0) return s;
+      const { newTasks, newBlocks } = generateRecurringInstances(
+        s.recurrenceRules,
+        s.tasks,
+        s.timeBlocks,
+        s.preferences.categories
+      );
+      if (newTasks.length === 0) return s;
+      // Also clean up old instances
+      const cleaned = cleanupOldRecurringInstances(
+        [...s.tasks, ...newTasks],
+        [...s.timeBlocks, ...newBlocks]
+      );
+      return { ...s, tasks: cleaned.tasks, timeBlocks: cleaned.timeBlocks };
+    });
+  }, [setState]);
+
   const addProject = useCallback((categoryId: string, projectName: string) => {
     setState((s) => {
       const existing = s.customProjects[categoryId] || [];
@@ -484,6 +565,10 @@ export function useDayFlowStore() {
     displaceBlock,
     reorderTasks,
     addProject,
+    addRecurrenceRule,
+    updateRecurrenceRule,
+    deleteRecurrenceRule,
+    generateRecurrences,
     clearAllData,
     setState,
   };

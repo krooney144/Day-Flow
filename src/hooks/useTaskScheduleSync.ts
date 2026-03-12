@@ -8,7 +8,7 @@ import { TimeBlock } from "@/types/dayflow";
  * and auto-create blocks for them. Only syncs tasks with horizon === "today".
  */
 export function useTaskScheduleSync() {
-  const { tasks, timeBlocks, addTimeBlocks } = useDayFlow();
+  const { tasks, timeBlocks, addTimeBlocks, preferences } = useDayFlow();
 
   useEffect(() => {
     const now = new Date();
@@ -28,12 +28,14 @@ export function useTaskScheduleSync() {
     const newBlocks: TimeBlock[] = [];
     for (const task of orphaned) {
       const durationHours = (task.estimatedMinutes || 30) / 60;
+      const category = preferences.categories.find((c) => c.id === task.categoryId);
       const startHour = findNextAvailableSlot(
         [...timeBlocks, ...newBlocks],
         durationHours,
         task.preferredTime,
         today,
-        currentHour
+        currentHour,
+        category?.schedulingWindow
       );
       newBlocks.push({
         id: `b-sync-${task.id}`,

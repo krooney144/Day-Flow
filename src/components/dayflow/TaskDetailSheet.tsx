@@ -1,13 +1,14 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef, useCallback } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import { useDayFlow } from "@/context/DayFlowContext";
-import { Task, CATEGORY_COLOR_MAP, EnergyLevel, TimeOfDay, DEFAULT_PROJECTS } from "@/types/dayflow";
+import { Task, CATEGORY_COLOR_MAP, EnergyLevel, TimeOfDay, DEFAULT_PROJECTS, RecurrenceFrequency, RecurrenceRule } from "@/types/dayflow";
 import { mergeProjects } from "@/lib/project-utils";
 import { X, Calendar, Clock, Tag, FileText, Zap, MapPin, Repeat, Timer, FolderOpen, ArrowRight } from "lucide-react";
 import { format } from "date-fns";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { Calendar as CalendarPicker } from "@/components/ui/calendar";
 import { cn, formatHour } from "@/lib/utils";
+import { toast } from "sonner";
 
 interface Props {
   task: Task | null;
@@ -20,18 +21,22 @@ const TIME_OPTIONS: TimeOfDay[] = ["morning", "afternoon", "evening", "any"];
 const ENERGY_OPTIONS: EnergyLevel[] = ["low", "medium", "high"];
 
 export default function TaskDetailSheet({ task, onClose }: Props) {
-  const { getCategory, updateTask, dropTask, timeBlocks, preferences, customProjects, moveBlockToDate } = useDayFlow();
+  const { getCategory, updateTask, dropTask, timeBlocks, preferences, customProjects, moveBlockToDate, recurrenceRules, addRecurrenceRule, deleteRecurrenceRule } = useDayFlow();
 
-  const [estimatedMinutes, setEstimatedMinutes] = useState(30);
   const [title, setTitle] = useState("");
+  const [notes, setNotes] = useState("");
+  const [estimatedMinutes, setEstimatedMinutes] = useState(30);
   const [priority, setPriority] = useState(3);
   const [preferredTime, setPreferredTime] = useState<TimeOfDay>("any");
   const [energyNeeded, setEnergyNeeded] = useState<EnergyLevel>("medium");
-  const [notes, setNotes] = useState("");
   const [categoryId, setCategoryId] = useState("work");
   const [project, setProject] = useState<string | undefined>();
   const [deadline, setDeadline] = useState<Date | undefined>();
 
+  const titleTimer = useRef<ReturnType<typeof setTimeout>>();
+  const notesTimer = useRef<ReturnType<typeof setTimeout>>();
+
+  // Sync local state when task changes
   useEffect(() => {
     if (task) {
       setTitle(task.title);
@@ -46,6 +51,48 @@ export default function TaskDetailSheet({ task, onClose }: Props) {
     }
   }, [task]);
 
+  // Cleanup debounce timers on unmount
+  useEffect(() => {
+    return () => {
+      if (titleTimer.current) clearTimeout(titleTimer.current);
+      if (notesTimer.current) clearTimeout(notesTimer.current);
+    };
+  }, []);
+
+  // Auto-save helper for immediate (non-text) fields
+  const autoSave = useCallback(
+    (updates: Partial<Task>) => {
+      if (!task) return;
+      updateTask(task.id, updates);
+    },
+    [task, updateTask]
+  );
+
+  // Debounced save for text fields
+  const debouncedSaveTitle = useCallback(
+    (value: string) => {
+      if (titleTimer.current) clearTimeout(titleTimer.current);
+      titleTimer.current = setTimeout(() => {
+        if (task && value.trim()) {
+          updateTask(task.id, { title: value.trim() });
+        }
+      }, 500);
+    },
+    [task, updateTask]
+  );
+
+  const debouncedSaveNotes = useCallback(
+    (value: string) => {
+      if (notesTimer.current) clearTimeout(notesTimer.current);
+      notesTimer.current = setTimeout(() => {
+        if (task) {
+          updateTask(task.id, { notes: value });
+        }
+      }, 500);
+    },
+    [task, updateTask]
+  );
+
   if (!task) return null;
 
   const cat = getCategory(categoryId);
@@ -57,21 +104,6 @@ export default function TaskDetailSheet({ task, onClose }: Props) {
   // Projects for selected category
   const allProjects = mergeProjects(customProjects);
   const availableProjects = allProjects[categoryId] || [];
-
-  const handleSave = () => {
-    updateTask(task.id, {
-      title: title.trim() || task.title,
-      estimatedMinutes,
-      priority,
-      preferredTime,
-      energyNeeded,
-      notes,
-      categoryId,
-      project,
-      deadline: deadline ? deadline.toISOString() : undefined,
-    });
-    onClose();
-  };
 
   const handleDrop = () => {
     dropTask(task.id);
@@ -111,13 +143,24 @@ export default function TaskDetailSheet({ task, onClose }: Props) {
                 </div>
                 <input
                   value={title}
-                  onChange={(e) => setTitle(e.target.value)}
+                  onChange={(e) => {
+                    setTitle(e.target.value);
+                    debouncedSaveTitle(e.target.value);
+                  }}
                   className="text-display text-lg text-foreground bg-transparent outline-none w-full focus:ring-1 focus:ring-primary/30 rounded-lg px-1 -mx-1"
                 />
               </div>
-              <button aria-label="Close" onClick={onClose} className="tap-target flex items-center justify-center rounded-xl p-2 active:bg-secondary">
-                <X className="h-5 w-5 text-muted-foreground" />
-              </button>
+              <div className="flex items-center gap-1">
+                <button
+                  onClick={handleDrop}
+                  className="rounded-xl px-3 py-2 text-xs font-medium text-destructive active:bg-muted transition-colors"
+                >
+                  Drop
+                </button>
+                <button aria-label="Close" onClick={onClose} className="tap-target flex items-center justify-center rounded-xl p-2 active:bg-secondary">
+                  <X className="h-5 w-5 text-muted-foreground" />
+                </button>
+              </div>
             </div>
 
             <div className="space-y-5">
@@ -161,7 +204,10 @@ export default function TaskDetailSheet({ task, onClose }: Props) {
                     <CalendarPicker
                       mode="single"
                       selected={deadline}
-                      onSelect={setDeadline}
+                      onSelect={(d) => {
+                        setDeadline(d);
+                        autoSave({ deadline: d ? d.toISOString() : undefined });
+                      }}
                       initialFocus
                       className={cn("p-3 pointer-events-auto")}
                     />
@@ -179,8 +225,9 @@ export default function TaskDetailSheet({ task, onClose }: Props) {
                         key={c.id}
                         onClick={() => {
                           setCategoryId(c.id);
-                          // Reset project if switching category
+                          const newProject = c.id !== categoryId ? undefined : project;
                           if (c.id !== categoryId) setProject(undefined);
+                          autoSave({ categoryId: c.id, project: newProject });
                         }}
                         className={cn(
                           "flex items-center gap-1.5 rounded-lg px-2.5 py-1 text-xs font-medium transition-all",
@@ -202,7 +249,10 @@ export default function TaskDetailSheet({ task, onClose }: Props) {
                 <FieldSection icon={<FolderOpen className="h-4 w-4" />} label="Project">
                   <div className="flex flex-wrap gap-1.5">
                     <button
-                      onClick={() => setProject(undefined)}
+                      onClick={() => {
+                        setProject(undefined);
+                        autoSave({ project: undefined });
+                      }}
                       className={cn(
                         "rounded-lg px-2.5 py-1 text-xs font-medium transition-all",
                         !project
@@ -215,7 +265,10 @@ export default function TaskDetailSheet({ task, onClose }: Props) {
                     {availableProjects.map((p) => (
                       <button
                         key={p}
-                        onClick={() => setProject(p)}
+                        onClick={() => {
+                          setProject(p);
+                          autoSave({ project: p });
+                        }}
                         className={cn(
                           "rounded-lg px-2.5 py-1 text-xs font-medium transition-all",
                           project === p
@@ -236,7 +289,10 @@ export default function TaskDetailSheet({ task, onClose }: Props) {
                   {PRIORITY_OPTIONS.map((p) => (
                     <button
                       key={p}
-                      onClick={() => setPriority(p)}
+                      onClick={() => {
+                        setPriority(p);
+                        autoSave({ priority: p });
+                      }}
                       className={cn(
                         "h-8 w-8 rounded-lg text-xs font-semibold transition-all",
                         priority === p
@@ -256,7 +312,10 @@ export default function TaskDetailSheet({ task, onClose }: Props) {
                   {DURATION_CHIPS.map((d) => (
                     <button
                       key={d}
-                      onClick={() => setEstimatedMinutes(d)}
+                      onClick={() => {
+                        setEstimatedMinutes(d);
+                        autoSave({ estimatedMinutes: d });
+                      }}
                       className={cn(
                         "rounded-lg px-2.5 py-1 text-xs font-medium transition-all",
                         estimatedMinutes === d
@@ -276,7 +335,10 @@ export default function TaskDetailSheet({ task, onClose }: Props) {
                   {TIME_OPTIONS.map((t) => (
                     <button
                       key={t}
-                      onClick={() => setPreferredTime(t)}
+                      onClick={() => {
+                        setPreferredTime(t);
+                        autoSave({ preferredTime: t });
+                      }}
                       className={cn(
                         "rounded-lg px-2.5 py-1 text-xs font-medium capitalize transition-all",
                         preferredTime === t
@@ -296,7 +358,10 @@ export default function TaskDetailSheet({ task, onClose }: Props) {
                   {ENERGY_OPTIONS.map((e) => (
                     <button
                       key={e}
-                      onClick={() => setEnergyNeeded(e)}
+                      onClick={() => {
+                        setEnergyNeeded(e);
+                        autoSave({ energyNeeded: e });
+                      }}
                       className={cn(
                         "rounded-lg px-3 py-1 text-xs font-medium capitalize transition-all",
                         energyNeeded === e
@@ -319,20 +384,22 @@ export default function TaskDetailSheet({ task, onClose }: Props) {
                 </div>
               )}
 
-              {/* Recurring indicator */}
-              {task.recurring && (
-                <div className="flex items-center gap-3">
-                  <Repeat className="h-4 w-4 text-muted-foreground" />
-                  <span className="text-xs text-muted-foreground font-medium w-24">Recurring</span>
-                  <span className="text-sm text-foreground">Yes</span>
-                </div>
-              )}
+              {/* Recurring */}
+              <RecurrenceSection
+                task={task}
+                recurrenceRules={recurrenceRules}
+                onAddRule={addRecurrenceRule}
+                onDeleteRule={deleteRecurrenceRule}
+              />
 
               {/* Notes */}
               <FieldSection icon={<FileText className="h-4 w-4" />} label="Notes">
                 <textarea
                   value={notes}
-                  onChange={(e) => setNotes(e.target.value)}
+                  onChange={(e) => {
+                    setNotes(e.target.value);
+                    debouncedSaveNotes(e.target.value);
+                  }}
                   placeholder="Add notes..."
                   rows={3}
                   className="w-full text-sm bg-secondary rounded-xl p-3 text-foreground placeholder:text-muted-foreground border-none outline-none resize-none focus:ring-1 focus:ring-primary/30"
@@ -346,26 +413,178 @@ export default function TaskDetailSheet({ task, onClose }: Props) {
                 </p>
               )}
             </div>
-
-            {/* Actions */}
-            <div className="flex gap-2 mt-6">
-              <button
-                onClick={handleSave}
-                className="flex-1 rounded-xl bg-primary py-2.5 text-sm font-medium text-primary-foreground active:opacity-90 transition-opacity"
-              >
-                Save changes
-              </button>
-              <button
-                onClick={handleDrop}
-                className="rounded-xl bg-secondary px-4 py-2.5 text-sm font-medium text-destructive active:bg-muted transition-colors"
-              >
-                Drop
-              </button>
-            </div>
           </motion.div>
         </>
       )}
     </AnimatePresence>
+  );
+}
+
+const FREQUENCY_OPTIONS: { value: RecurrenceFrequency; label: string }[] = [
+  { value: "daily", label: "Daily" },
+  { value: "weekdays", label: "Weekdays" },
+  { value: "weekly", label: "Weekly" },
+  { value: "biweekly", label: "Biweekly" },
+  { value: "monthly", label: "Monthly" },
+];
+
+const DAY_LABELS = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
+
+function RecurrenceSection({
+  task,
+  recurrenceRules,
+  onAddRule,
+  onDeleteRule,
+}: {
+  task: Task;
+  recurrenceRules: RecurrenceRule[];
+  onAddRule: (rule: RecurrenceRule) => void;
+  onDeleteRule: (id: string) => void;
+}) {
+  const existingRule = recurrenceRules.find(
+    (r) => r.templateTaskId === task.id || r.id === task.recurringRuleId
+  );
+  // For generated instances, find the rule
+  const ruleForInstance = task.recurringRuleId
+    ? recurrenceRules.find((r) => r.id === task.recurringRuleId)
+    : null;
+
+  const [showSetup, setShowSetup] = useState(false);
+  const [frequency, setFrequency] = useState<RecurrenceFrequency>("weekly");
+  const [selectedDays, setSelectedDays] = useState<number[]>([]);
+
+  // If this is a generated instance, show info only
+  if (ruleForInstance && task.recurringRuleId) {
+    return (
+      <div className="flex items-center gap-3 rounded-xl bg-primary/10 p-3">
+        <Repeat className="h-4 w-4 text-primary" />
+        <div className="flex-1">
+          <span className="text-xs text-muted-foreground font-medium">Recurring</span>
+          <p className="text-sm text-foreground font-medium capitalize">{ruleForInstance.frequency}</p>
+        </div>
+      </div>
+    );
+  }
+
+  // If rule already exists for this template task
+  if (existingRule) {
+    return (
+      <div className="flex items-center gap-3 rounded-xl bg-primary/10 p-3">
+        <Repeat className="h-4 w-4 text-primary" />
+        <div className="flex-1">
+          <span className="text-xs text-muted-foreground font-medium">Recurring</span>
+          <p className="text-sm text-foreground font-medium capitalize">
+            {existingRule.frequency}
+            {existingRule.daysOfWeek && existingRule.daysOfWeek.length > 0 && (
+              <span className="text-muted-foreground text-xs ml-1">
+                ({existingRule.daysOfWeek.map((d) => DAY_LABELS[d]).join(", ")})
+              </span>
+            )}
+          </p>
+        </div>
+        <button
+          onClick={() => onDeleteRule(existingRule.id)}
+          className="rounded-lg bg-secondary px-2.5 py-1.5 text-xs font-medium text-destructive active:bg-muted transition-colors"
+        >
+          Remove
+        </button>
+      </div>
+    );
+  }
+
+  // No recurrence — show option to add
+  if (!showSetup) {
+    return (
+      <FieldSection icon={<Repeat className="h-4 w-4" />} label="Recurring">
+        <button
+          onClick={() => setShowSetup(true)}
+          className="rounded-lg bg-muted/50 px-3 py-1.5 text-xs font-medium text-muted-foreground hover:bg-secondary transition-colors"
+        >
+          Make recurring...
+        </button>
+      </FieldSection>
+    );
+  }
+
+  const toggleDay = (day: number) => {
+    setSelectedDays((prev) =>
+      prev.includes(day) ? prev.filter((d) => d !== day) : [...prev, day]
+    );
+  };
+
+  const handleCreate = () => {
+    const today = new Date().toISOString().split("T")[0];
+    const rule: RecurrenceRule = {
+      id: `rr-${Date.now()}`,
+      templateTaskId: task.id,
+      frequency,
+      daysOfWeek: (frequency === "weekly" || frequency === "biweekly") && selectedDays.length > 0
+        ? selectedDays
+        : undefined,
+      startDate: today,
+    };
+    onAddRule(rule);
+    setShowSetup(false);
+  };
+
+  return (
+    <FieldSection icon={<Repeat className="h-4 w-4" />} label="Recurring">
+      <div className="space-y-3 rounded-xl bg-secondary/50 p-3">
+        <div className="flex flex-wrap gap-1.5">
+          {FREQUENCY_OPTIONS.map((opt) => (
+            <button
+              key={opt.value}
+              onClick={() => setFrequency(opt.value)}
+              className={cn(
+                "rounded-lg px-2.5 py-1 text-xs font-medium transition-all",
+                frequency === opt.value
+                  ? "bg-primary text-primary-foreground"
+                  : "bg-muted/50 text-muted-foreground"
+              )}
+            >
+              {opt.label}
+            </button>
+          ))}
+        </div>
+
+        {(frequency === "weekly" || frequency === "biweekly") && (
+          <div>
+            <p className="text-[10px] text-muted-foreground mb-1.5">Days of week</p>
+            <div className="flex gap-1">
+              {DAY_LABELS.map((label, i) => (
+                <button
+                  key={i}
+                  onClick={() => toggleDay(i)}
+                  className={cn(
+                    "flex-1 rounded-lg py-1.5 text-[10px] font-medium transition-all",
+                    selectedDays.includes(i)
+                      ? "bg-primary text-primary-foreground"
+                      : "bg-muted/50 text-muted-foreground"
+                  )}
+                >
+                  {label}
+                </button>
+              ))}
+            </div>
+          </div>
+        )}
+
+        <div className="flex gap-2">
+          <button
+            onClick={handleCreate}
+            className="flex-1 rounded-lg bg-primary py-2 text-xs font-medium text-primary-foreground active:opacity-90 transition-opacity"
+          >
+            Set recurring
+          </button>
+          <button
+            onClick={() => setShowSetup(false)}
+            className="rounded-lg bg-muted px-3 py-2 text-xs font-medium text-muted-foreground active:bg-border transition-colors"
+          >
+            Cancel
+          </button>
+        </div>
+      </div>
+    </FieldSection>
   );
 }
 

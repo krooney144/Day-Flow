@@ -1,25 +1,38 @@
-import { TimeBlock } from "@/types/dayflow";
+import { TimeBlock, SchedulingWindow } from "@/types/dayflow";
 
 /**
  * Find the next available time slot given existing blocks.
  * Returns the start hour (decimal, snapped to 15-min increments).
- * 
+ *
  * @param currentHour - If provided, never schedule before this hour (for future-only scheduling)
+ * @param categoryWindow - If provided, constrains scheduling to this window
  */
 export function findNextAvailableSlot(
   existingBlocks: TimeBlock[],
   durationHours: number,
   preferredTime: string,
   date: string,
-  currentHour?: number
+  currentHour?: number,
+  categoryWindow?: SchedulingWindow
 ): number {
-  const ranges: Record<string, [number, number]> = {
+  const defaultRanges: Record<string, [number, number]> = {
     morning: [7, 12],
     afternoon: [12, 17],
     evening: [17, 21],
     any: [8, 20],
   };
-  const [rangeStart, rangeEnd] = ranges[preferredTime] || ranges.any;
+  let [rangeStart, rangeEnd] = defaultRanges[preferredTime] || defaultRanges.any;
+
+  // Constrain to category scheduling window if provided
+  if (categoryWindow) {
+    rangeStart = Math.max(rangeStart, categoryWindow.startHour);
+    rangeEnd = Math.min(rangeEnd, categoryWindow.endHour);
+    // If preferred time falls entirely outside the window, use the window directly
+    if (rangeStart >= rangeEnd) {
+      rangeStart = categoryWindow.startHour;
+      rangeEnd = categoryWindow.endHour;
+    }
+  }
 
   // Clamp range start to current time (rounded up to next 15min) if provided
   const now15 = currentHour !== undefined
@@ -32,9 +45,13 @@ export function findNextAvailableSlot(
     .map((b) => ({ start: b.startHour, end: b.startHour + b.durationHours }))
     .sort((a, b) => a.start - b.start);
 
+  // Fallback range: use category window if available, else broad range
+  const fallbackStart = categoryWindow ? Math.max(categoryWindow.startHour, now15) : Math.max(7, now15);
+  const fallbackEnd = categoryWindow ? categoryWindow.endHour : 22;
+
   for (const tryRange of [
     [effectiveStart, rangeEnd],
-    [Math.max(7, now15), 22],
+    [fallbackStart, fallbackEnd],
   ]) {
     let candidate = tryRange[0];
     while (candidate + durationHours <= tryRange[1]) {

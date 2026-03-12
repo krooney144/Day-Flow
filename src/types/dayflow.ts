@@ -3,10 +3,16 @@ export type EnergyLevel = "low" | "medium" | "high";
 export type TaskHorizon = "today" | "soon" | "this-week" | "backlog";
 export type TimeOfDay = "morning" | "afternoon" | "evening" | "any";
 
+export interface SchedulingWindow {
+  startHour: number; // 0-23
+  endHour: number;   // 1-24
+}
+
 export interface Category {
   id: string;
   name: string;
   color: string; // tailwind cat-* key
+  schedulingWindow?: SchedulingWindow; // if undefined, uses full extended hours
 }
 
 export interface Task {
@@ -25,6 +31,7 @@ export interface Task {
   energyNeeded: EnergyLevel;
   location?: string;
   recurring: boolean;
+  recurringRuleId?: string;    // If this is a generated instance, links to the RecurrenceRule
   projectGoal?: string;
   createdAt: string;
   completedAt?: string;
@@ -45,6 +52,17 @@ export interface TimeBlock {
   type: "task" | "meal" | "break" | "transition" | "event";
 }
 
+export type RecurrenceFrequency = "daily" | "weekdays" | "weekly" | "biweekly" | "monthly";
+
+export interface RecurrenceRule {
+  id: string;
+  templateTaskId: string;     // The task that serves as a template
+  frequency: RecurrenceFrequency;
+  daysOfWeek?: number[];      // 0=Sun, 1=Mon, ..., 6=Sat (for weekly/biweekly)
+  startDate: string;          // YYYY-MM-DD — when recurrence begins
+  endDate?: string;           // YYYY-MM-DD — optional end date
+}
+
 export interface ChatMessage {
   id: string;
   role: "user" | "assistant";
@@ -58,6 +76,8 @@ export interface UserPreferences {
   lunchHour: number;
   workoutTime: TimeOfDay;
   defaultTaskDuration: number;
+  includeBreaks: boolean;
+  protectMealTimes: boolean;
   categories: Category[];
 }
 
