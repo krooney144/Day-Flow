@@ -36,13 +36,13 @@
 
     --radius: 0.75rem;
 
-    --cat-blue: 195 28% 59%;
-    --cat-grape: 0 20% 84%;
-    --cat-teal: 178 22% 69%;
-    --cat-green: 97 35% 73%;
-    --cat-mauve: 11 72% 68%;
-    --cat-rose: 8 73% 72%;
-    --cat-navy: 177 37% 37%;
+    --cat-blue: 210 45% 65%;
+    --cat-grape: 270 35% 68%;
+    --cat-teal: 178 35% 60%;
+    --cat-green: 140 30% 65%;
+    --cat-mauve: 320 30% 72%;
+    --cat-rose: 345 50% 68%;
+    --cat-navy: 220 40% 50%;
 
     --shadow-surface: 0 0 0 1px hsl(195 14% 90% / 0.8), 0 2px 4px -1px hsl(195 14% 82% / 0.4);
     --shadow-surface-hover: 0 0 0 1px hsl(195 14% 86% / 0.9), 0 4px 8px -2px hsl(195 14% 78% / 0.5);
