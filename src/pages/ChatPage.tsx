@@ -2,14 +2,14 @@ import { useState, useRef, useEffect } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import { useDayFlow } from "@/context/DayFlowContext";
 import { ChatMessage } from "@/types/dayflow";
-import { Send } from "lucide-react";
+import { Send, RotateCcw } from "lucide-react";
 import ReactMarkdown from "react-markdown";
 import { callPlannerAI, executeToolCalls } from "@/lib/planner-ai";
 import { toast } from "sonner";
 
 export default function ChatPage() {
   const store = useDayFlow();
-  const { chatMessages, addChatMessage, tasks, preferences, timeBlocks, customProjects } = store;
+  const { chatMessages, addChatMessage, clearChat, tasks, preferences, timeBlocks, customProjects } = store;
   const [input, setInput] = useState("");
   const [isTyping, setIsTyping] = useState(false);
   const scrollRef = useRef<HTMLDivElement>(null);
@@ -93,9 +93,21 @@ export default function ChatPage() {
 
   return (
     <div className="flex flex-col h-full">
-      <div className="px-4 pt-4 pb-2">
-        <h1 className="text-display text-xl text-foreground">Planner</h1>
-        <p className="text-xs text-muted-foreground mt-0.5">Tell me everything — I'll turn it into a plan</p>
+      <div className="px-4 pt-4 pb-2 flex items-start justify-between">
+        <div>
+          <h1 className="text-display text-xl text-foreground">Planner</h1>
+          <p className="text-xs text-muted-foreground mt-0.5">Tell me everything — I'll turn it into a plan</p>
+        </div>
+        {chatMessages.length > 0 && (
+          <button
+            aria-label="New conversation"
+            onClick={clearChat}
+            className="tap-target flex items-center gap-1.5 rounded-xl px-3 py-1.5 text-xs font-medium text-muted-foreground active:bg-secondary transition-colors"
+          >
+            <RotateCcw className="h-3.5 w-3.5" />
+            New chat
+          </button>
+        )}
       </div>
 
       <div ref={scrollRef} className="flex-1 overflow-y-auto px-4 pb-4">

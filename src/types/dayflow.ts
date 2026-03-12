@@ -27,6 +27,7 @@ export interface Task {
   recurring: boolean;
   projectGoal?: string;
   createdAt: string;
+  completedAt?: string;
   rolloverCount: number;
   timeBlockId?: string;
   horizon: TaskHorizon;

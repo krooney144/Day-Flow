@@ -6,47 +6,47 @@
 
 @layer base {
   :root {
-    --background: 240 10% 98%;
-    --foreground: 224 25% 25%;
+    --background: 195 10% 98%;
+    --foreground: 203 19% 30%;
 
     --card: 0 0% 100%;
-    --card-foreground: 224 25% 25%;
+    --card-foreground: 203 19% 30%;
 
     --popover: 0 0% 100%;
-    --popover-foreground: 224 25% 25%;
+    --popover-foreground: 203 19% 30%;
 
-    --primary: 340 60% 65%;
+    --primary: 163 30% 58%;
     --primary-foreground: 0 0% 100%;
 
-    --secondary: 220 20% 93%;
-    --secondary-foreground: 224 25% 45%;
+    --secondary: 195 14% 93%;
+    --secondary-foreground: 202 17% 42%;
 
-    --muted: 220 20% 96%;
-    --muted-foreground: 224 20% 65%;
+    --muted: 195 12% 96%;
+    --muted-foreground: 202 14% 55%;
 
-    --accent: 180 40% 50%;
-    --accent-foreground: 0 0% 100%;
+    --accent: 26 62% 81%;
+    --accent-foreground: 203 19% 30%;
 
-    --destructive: 0 60% 55%;
+    --destructive: 4 21% 55%;
     --destructive-foreground: 0 0% 100%;
 
-    --border: 220 20% 90%;
-    --input: 220 20% 93%;
-    --ring: 340 60% 75%;
+    --border: 195 14% 90%;
+    --input: 195 14% 93%;
+    --ring: 172 18% 61%;
 
     --radius: 0.75rem;
 
-    --cat-blue: 210 50% 70%;
-    --cat-grape: 270 30% 75%;
-    --cat-teal: 180 30% 70%;
-    --cat-green: 140 25% 75%;
-    --cat-mauve: 310 30% 80%;
-    --cat-rose: 340 50% 75%;
-    --cat-navy: 220 40% 55%;
+    --cat-blue: 195 28% 59%;
+    --cat-grape: 0 20% 84%;
+    --cat-teal: 178 22% 69%;
+    --cat-green: 97 35% 73%;
+    --cat-mauve: 11 72% 68%;
+    --cat-rose: 8 73% 72%;
+    --cat-navy: 177 37% 37%;
 
-    --shadow-surface: 0 0 0 1px hsl(220 20% 90% / 0.8), 0 2px 4px -1px hsl(220 20% 80% / 0.5);
-    --shadow-surface-hover: 0 0 0 1px hsl(220 20% 85% / 0.9), 0 4px 8px -2px hsl(220 20% 80% / 0.6);
-    --shadow-elevated: 0 0 0 1px hsl(220 20% 88% / 0.6), 0 8px 24px -4px hsl(220 20% 70% / 0.3);
+    --shadow-surface: 0 0 0 1px hsl(195 14% 90% / 0.8), 0 2px 4px -1px hsl(195 14% 82% / 0.4);
+    --shadow-surface-hover: 0 0 0 1px hsl(195 14% 86% / 0.9), 0 4px 8px -2px hsl(195 14% 78% / 0.5);
+    --shadow-elevated: 0 0 0 1px hsl(195 14% 88% / 0.6), 0 8px 24px -4px hsl(195 14% 70% / 0.25);
 
     --ease-out-expo: cubic-bezier(0.32, 0.72, 0, 1);
   }
