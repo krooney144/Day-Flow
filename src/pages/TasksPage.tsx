@@ -3,6 +3,7 @@ import { motion, AnimatePresence } from "framer-motion";
 import { useDayFlow } from "@/context/DayFlowContext";
 import { Task, CATEGORY_COLOR_MAP, CATEGORY_COLOR_BG_MAP, CATEGORY_TEXT_COLOR_MAP } from "@/types/dayflow";
 import { Plus, Check, CheckCircle2, ChevronDown } from "lucide-react";
+import { formatHour } from "@/lib/utils";
 import TaskDetailSheet from "@/components/dayflow/TaskDetailSheet";
 import QuickAddTask from "@/components/dayflow/QuickAddTask";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
@@ -169,13 +170,6 @@ export default function TasksPage() {
   );
 }
 
-function formatHour(h: number): string {
-  const hours = Math.floor(h);
-  const mins = Math.round((h - hours) * 60);
-  const ampm = hours < 12 ? "AM" : "PM";
-  const display = hours === 0 ? 12 : hours > 12 ? hours - 12 : hours;
-  return mins > 0 ? `${display}:${mins.toString().padStart(2, "0")} ${ampm}` : `${display} ${ampm}`;
-}
 
 function TaskRow({
   task,

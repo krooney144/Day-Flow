@@ -6,7 +6,7 @@ import { X, Calendar, Clock, Tag, FileText, Zap, MapPin, Repeat, Timer, FolderOp
 import { format } from "date-fns";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { Calendar as CalendarPicker } from "@/components/ui/calendar";
-import { cn } from "@/lib/utils";
+import { cn, formatHour } from "@/lib/utils";
 
 interface Props {
   task: Task | null;
@@ -17,14 +17,6 @@ const DURATION_CHIPS = [15, 30, 45, 60, 90, 120];
 const PRIORITY_OPTIONS = [1, 2, 3, 4, 5];
 const TIME_OPTIONS: TimeOfDay[] = ["morning", "afternoon", "evening", "any"];
 const ENERGY_OPTIONS: EnergyLevel[] = ["low", "medium", "high"];
-
-function formatHour(h: number): string {
-  const hours = Math.floor(h);
-  const mins = Math.round((h - hours) * 60);
-  const ampm = hours < 12 ? "AM" : "PM";
-  const display = hours === 0 ? 12 : hours > 12 ? hours - 12 : hours;
-  return mins > 0 ? `${display}:${mins.toString().padStart(2, "0")} ${ampm}` : `${display} ${ampm}`;
-}
 
 export default function TaskDetailSheet({ task, onClose }: Props) {
   const { getCategory, updateTask, dropTask, timeBlocks, preferences } = useDayFlow();
@@ -121,7 +113,7 @@ export default function TaskDetailSheet({ task, onClose }: Props) {
                   className="text-display text-lg text-foreground bg-transparent outline-none w-full focus:ring-1 focus:ring-primary/30 rounded-lg px-1 -mx-1"
                 />
               </div>
-              <button onClick={onClose} className="tap-target flex items-center justify-center rounded-xl p-2 active:bg-secondary">
+              <button aria-label="Close" onClick={onClose} className="tap-target flex items-center justify-center rounded-xl p-2 active:bg-secondary">
                 <X className="h-5 w-5 text-muted-foreground" />
               </button>
             </div>
