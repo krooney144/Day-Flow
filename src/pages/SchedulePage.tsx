@@ -1,21 +1,23 @@
 import { useState, useMemo, useRef, useCallback, useEffect } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import { useDayFlow } from "@/context/DayFlowContext";
-import { CATEGORY_COLOR_MAP, CATEGORY_COLOR_BG_MAP, TimeBlock } from "@/types/dayflow";
-import { ChevronLeft, ChevronRight, Check, ArrowRight } from "lucide-react";
+import { CATEGORY_COLOR_MAP, CATEGORY_COLOR_BG_MAP, TimeBlock, Task } from "@/types/dayflow";
+import { ChevronLeft, ChevronRight, Check, ArrowRight, Pencil } from "lucide-react";
 import { formatHour } from "@/lib/utils";
+import TaskDetailSheet from "@/components/dayflow/TaskDetailSheet";
 
 const HOUR_HEIGHT = 64; // px per hour
-const START_HOUR = 6;
-const END_HOUR = 21;
+const START_HOUR = 0;
+const END_HOUR = 24;
 const SNAP_MINUTES = 15;
 
 type ScheduleView = "day" | "3day" | "week";
 
 export default function SchedulePage() {
-  const { getBlocksForDate, getCategory, preferences } = useDayFlow();
+  const { getBlocksForDate, getCategory, preferences, tasks } = useDayFlow();
   const [view, setView] = useState<ScheduleView>("day");
   const [dateOffset, setDateOffset] = useState(0);
+  const [editingTask, setEditingTask] = useState<Task | null>(null);
 
   const currentDate = useMemo(() => {
     const d = new Date();
@@ -27,6 +29,11 @@ export default function SchedulePage() {
 
   const formatDate = (d: Date) =>
     d.toLocaleDateString("en-US", { weekday: "long", month: "short", day: "numeric" });
+
+  const handleEditTask = useCallback((taskId: string) => {
+    const task = tasks.find((t) => t.id === taskId);
+    if (task) setEditingTask(task);
+  }, [tasks]);
 
   return (
     <div className="flex flex-col h-full">
@@ -86,10 +93,13 @@ export default function SchedulePage() {
 
       {/* Content */}
       <div className="flex-1 overflow-y-auto px-4 pb-24">
-        {view === "day" && <DayView dateStr={dateStr} />}
-        {view === "3day" && <ThreeDayView baseDate={currentDate} />}
-        {view === "week" && <WeekView baseDate={currentDate} />}
+        {view === "day" && <DayView dateStr={dateStr} onEditTask={handleEditTask} />}
+        {view === "3day" && <ThreeDayView baseDate={currentDate} onEditTask={handleEditTask} />}
+        {view === "week" && <WeekView baseDate={currentDate} onEditTask={handleEditTask} />}
       </div>
+
+      {/* Task Detail Sheet */}
+      <TaskDetailSheet task={editingTask} onClose={() => setEditingTask(null)} />
     </div>
   );
 }
@@ -140,15 +150,24 @@ function snapToGrid(hour: number): number {
   return Math.round(hour * increments) / increments;
 }
 
-function DayView({ dateStr }: { dateStr: string }) {
+function DayView({ dateStr, onEditTask }: { dateStr: string; onEditTask: (taskId: string) => void }) {
   const { getBlocksForDate, getCategory, toggleTaskComplete, tasks, updateTimeBlock, moveBlockToDate, displaceBlock } = useDayFlow();
   const blocks = getBlocksForDate(dateStr);
   const now = new Date();
   const currentHour = now.getHours() + now.getMinutes() / 60;
   const isToday = dateStr === new Date().toISOString().split("T")[0];
   const containerRef = useRef<HTMLDivElement>(null);
+  const scrollRef = useRef<HTMLDivElement>(null);
   const [draggingId, setDraggingId] = useState<string | null>(null);
   const [dragPreviewHour, setDragPreviewHour] = useState<number | null>(null);
+
+  // Auto-scroll to ~7 AM on mount
+  useEffect(() => {
+    if (scrollRef.current) {
+      const scrollTo = 7 * HOUR_HEIGHT; // 7 AM
+      scrollRef.current.scrollTop = scrollTo;
+    }
+  }, [dateStr]);
 
   const isTaskCompleted = (taskId?: string) => {
     if (!taskId) return false;
@@ -200,7 +219,6 @@ function DayView({ dateStr }: { dateStr: string }) {
       if (block) {
         const clamped = Math.max(START_HOUR, Math.min(END_HOUR - block.durationHours, h));
         updateTimeBlock(blockId, { startHour: clamped });
-        // Displace any blocks that now overlap with the moved block
         displaceBlock(blockId);
       }
       setDraggingId(null);
@@ -211,85 +229,88 @@ function DayView({ dateStr }: { dateStr: string }) {
     window.addEventListener("pointermove", onMove);
     window.addEventListener("pointerup", onUp);
     cleanupRef.current = cleanup;
-  }, [blocks, getHourFromPointer, updateTimeBlock]);
+  }, [blocks, getHourFromPointer, updateTimeBlock, displaceBlock]);
 
   return (
-    <div ref={containerRef} className="relative mt-2 select-none" style={{ height: (END_HOUR - START_HOUR) * HOUR_HEIGHT }}>
-      {/* Hour lines */}
-      {Array.from({ length: END_HOUR - START_HOUR + 1 }, (_, i) => {
-        const hour = START_HOUR + i;
-        const ampm = hour < 12 ? "AM" : "PM";
-        const display = hour === 0 ? 12 : hour > 12 ? hour - 12 : hour;
-        return (
+    <div ref={scrollRef} className="relative mt-2 overflow-y-auto" style={{ height: "calc(100vh - 200px)" }}>
+      <div ref={containerRef} className="relative select-none" style={{ height: (END_HOUR - START_HOUR) * HOUR_HEIGHT }}>
+        {/* Hour lines */}
+        {Array.from({ length: END_HOUR - START_HOUR + 1 }, (_, i) => {
+          const hour = START_HOUR + i;
+          const ampm = hour < 12 || hour === 24 ? "AM" : "PM";
+          const display = hour === 0 || hour === 24 ? 12 : hour > 12 ? hour - 12 : hour;
+          return (
+            <div
+              key={hour}
+              className="absolute left-0 right-0 flex items-start"
+              style={{ top: i * HOUR_HEIGHT }}
+            >
+              <span className="text-meta text-[10px] text-muted-foreground w-12 -mt-1.5 text-right pr-3">
+                {display} {ampm}
+              </span>
+              <div className="flex-1 border-t border-border" />
+            </div>
+          );
+        })}
+
+        {/* 15-min gridlines (subtle) */}
+        {Array.from({ length: (END_HOUR - START_HOUR) * 4 }, (_, i) => {
+          if (i % 4 === 0) return null;
+          return (
+            <div
+              key={`q-${i}`}
+              className="absolute left-12 right-0 border-t border-border/20"
+              style={{ top: (i / 4) * HOUR_HEIGHT }}
+            />
+          );
+        })}
+
+        {/* Current time line */}
+        {isToday && currentHour >= START_HOUR && currentHour <= END_HOUR && (
           <div
-            key={hour}
-            className="absolute left-0 right-0 flex items-start"
-            style={{ top: i * HOUR_HEIGHT }}
+            className="absolute left-12 right-0 z-20 flex items-center"
+            style={{ top: (currentHour - START_HOUR) * HOUR_HEIGHT }}
           >
-            <span className="text-meta text-[10px] text-muted-foreground w-12 -mt-1.5 text-right pr-3">
-              {display} {ampm}
-            </span>
-            <div className="flex-1 border-t border-border" />
+            <div className="h-2 w-2 rounded-full bg-primary -ml-1" />
+            <div className="flex-1 h-[1.5px] bg-primary" />
           </div>
-        );
-      })}
+        )}
 
-      {/* 15-min gridlines (subtle) */}
-      {Array.from({ length: (END_HOUR - START_HOUR) * 4 }, (_, i) => {
-        if (i % 4 === 0) return null; // skip hour lines
-        return (
-          <div
-            key={`q-${i}`}
-            className="absolute left-12 right-0 border-t border-border/20"
-            style={{ top: (i / 4) * HOUR_HEIGHT }}
+        {/* Drag preview ghost */}
+        {draggingId && dragPreviewHour !== null && (() => {
+          const block = blocks.find(b => b.id === draggingId);
+          if (!block) return null;
+          const top = (dragPreviewHour - START_HOUR) * HOUR_HEIGHT;
+          const height = Math.max(block.durationHours * HOUR_HEIGHT - 2, 24);
+          return (
+            <div
+              className="absolute left-12 right-0 rounded-xl border-2 border-dashed border-primary/40 bg-primary/5 pointer-events-none z-10"
+              style={{ top, height }}
+            />
+          );
+        })()}
+
+        {/* Time blocks */}
+        {layoutBlocks.map(({ block, column, totalColumns }) => (
+          <ScheduleBlock
+            key={block.id}
+            block={block}
+            column={column}
+            totalColumns={totalColumns}
+            completed={isTaskCompleted(block.taskId)}
+            onToggle={block.taskId ? () => toggleTaskComplete(block.taskId!) : undefined}
+            isDragging={draggingId === block.id}
+            dragPreviewHour={draggingId === block.id ? dragPreviewHour : null}
+            onPointerDown={(e) => handlePointerDown(block.id, e)}
+            onMoveToTomorrow={!block.isFixed ? () => {
+              const tomorrow = new Date();
+              tomorrow.setDate(tomorrow.getDate() + 1);
+              moveBlockToDate(block.id, tomorrow.toISOString().split("T")[0]);
+            } : undefined}
+            onEdit={block.taskId ? () => onEditTask(block.taskId!) : undefined}
           />
-        );
-      })}
-
-      {/* Current time line */}
-      {isToday && currentHour >= START_HOUR && currentHour <= END_HOUR && (
-        <div
-          className="absolute left-12 right-0 z-20 flex items-center"
-          style={{ top: (currentHour - START_HOUR) * HOUR_HEIGHT }}
-        >
-          <div className="h-2 w-2 rounded-full bg-primary -ml-1" />
-          <div className="flex-1 h-[1.5px] bg-primary" />
-        </div>
-      )}
-
-      {/* Drag preview ghost */}
-      {draggingId && dragPreviewHour !== null && (() => {
-        const block = blocks.find(b => b.id === draggingId);
-        if (!block) return null;
-        const top = (dragPreviewHour - START_HOUR) * HOUR_HEIGHT;
-        const height = Math.max(block.durationHours * HOUR_HEIGHT - 2, 24);
-        return (
-          <div
-            className="absolute left-12 right-0 rounded-xl border-2 border-dashed border-primary/40 bg-primary/5 pointer-events-none z-10"
-            style={{ top, height }}
-          />
-        );
-      })()}
-
-      {/* Time blocks */}
-      {layoutBlocks.map(({ block, column, totalColumns }) => (
-        <ScheduleBlock
-          key={block.id}
-          block={block}
-          column={column}
-          totalColumns={totalColumns}
-          completed={isTaskCompleted(block.taskId)}
-          onToggle={block.taskId ? () => toggleTaskComplete(block.taskId!) : undefined}
-          isDragging={draggingId === block.id}
-          dragPreviewHour={draggingId === block.id ? dragPreviewHour : null}
-          onPointerDown={(e) => handlePointerDown(block.id, e)}
-          onMoveToTomorrow={!block.isFixed ? () => {
-            const tomorrow = new Date();
-            tomorrow.setDate(tomorrow.getDate() + 1);
-            moveBlockToDate(block.id, tomorrow.toISOString().split("T")[0]);
-          } : undefined}
-        />
-      ))}
+        ))}
+      </div>
     </div>
   );
 }
@@ -304,6 +325,7 @@ function ScheduleBlock({
   dragPreviewHour,
   onPointerDown,
   onMoveToTomorrow,
+  onEdit,
 }: {
   block: TimeBlock;
   column: number;
@@ -314,6 +336,7 @@ function ScheduleBlock({
   dragPreviewHour: number | null;
   onPointerDown: (e: React.PointerEvent) => void;
   onMoveToTomorrow?: () => void;
+  onEdit?: () => void;
 }) {
   const { getCategory } = useDayFlow();
   const cat = getCategory(block.categoryId);
@@ -326,7 +349,6 @@ function ScheduleBlock({
   // Overlap layout
   const widthPercent = 100 / totalColumns;
   const leftPercent = column * widthPercent;
-  // Properly compute left/width accounting for 48px time label gutter
   const leftCalc = `calc(48px + (100% - 48px) * ${leftPercent / 100})`;
   const widthCalc = `calc((100% - 48px) * ${widthPercent / 100})`;
 
@@ -358,6 +380,15 @@ function ScheduleBlock({
       onPointerDown={block.isFixed ? undefined : onPointerDown}
     >
       <div className="flex items-start gap-2 h-full">
+        {/* Drag handle — larger touch target */}
+        {!block.isFixed && (
+          <div className="flex flex-col gap-0.5 opacity-30 mt-1 shrink-0 py-1 px-1 -ml-1">
+            <div className="h-[2px] w-4 rounded bg-muted-foreground" />
+            <div className="h-[2px] w-4 rounded bg-muted-foreground" />
+            <div className="h-[2px] w-4 rounded bg-muted-foreground" />
+          </div>
+        )}
+
         {block.type === "task" && onToggle && (
           <button
             aria-label={completed ? `Mark "${block.title}" incomplete` : `Complete "${block.title}"`}
@@ -366,11 +397,11 @@ function ScheduleBlock({
               e.stopPropagation();
               onToggle();
             }}
-            className={`flex h-4 w-4 mt-0.5 shrink-0 items-center justify-center rounded border-[1.5px] transition-all ${
+            className={`flex h-5 w-5 mt-0.5 shrink-0 items-center justify-center rounded border-[1.5px] transition-all ${
               completed ? "bg-primary border-primary" : "border-muted-foreground/40 bg-card/50"
             }`}
           >
-            {completed && <Check className="h-2.5 w-2.5 text-primary-foreground" />}
+            {completed && <Check className="h-3 w-3 text-primary-foreground" />}
           </button>
         )}
         {block.type !== "task" && <div className={`cat-dot mt-1.5 ${dotClass}`} />}
@@ -384,34 +415,42 @@ function ScheduleBlock({
             </p>
           )}
         </div>
-        {!block.isFixed && (
-          <div className="flex items-center gap-1">
-            {onMoveToTomorrow && (
-              <button
-                aria-label="Move to tomorrow"
-                onPointerDown={(e) => e.stopPropagation()}
-                onClick={(e) => {
-                  e.stopPropagation();
-                  onMoveToTomorrow();
-                }}
-                className="flex items-center justify-center rounded-lg p-1 opacity-40 hover:opacity-100 active:bg-secondary/50 transition-opacity"
-              >
-                <ArrowRight className="h-3 w-3 text-muted-foreground" />
-              </button>
-            )}
-            <div className="flex flex-col gap-0.5 opacity-30 mt-1">
-              <div className="h-[2px] w-3 rounded bg-muted-foreground" />
-              <div className="h-[2px] w-3 rounded bg-muted-foreground" />
-              <div className="h-[2px] w-3 rounded bg-muted-foreground" />
-            </div>
-          </div>
-        )}
+
+        {/* Action buttons */}
+        <div className="flex items-center gap-0.5 shrink-0">
+          {onEdit && (
+            <button
+              aria-label="Edit task"
+              onPointerDown={(e) => e.stopPropagation()}
+              onClick={(e) => {
+                e.stopPropagation();
+                onEdit();
+              }}
+              className="flex items-center justify-center rounded-lg p-1.5 opacity-50 hover:opacity-100 active:bg-secondary/50 transition-opacity"
+            >
+              <Pencil className="h-3.5 w-3.5 text-muted-foreground" />
+            </button>
+          )}
+          {onMoveToTomorrow && (
+            <button
+              aria-label="Move to tomorrow"
+              onPointerDown={(e) => e.stopPropagation()}
+              onClick={(e) => {
+                e.stopPropagation();
+                onMoveToTomorrow();
+              }}
+              className="flex items-center justify-center rounded-lg p-1.5 opacity-50 hover:opacity-100 active:bg-secondary/50 transition-opacity"
+            >
+              <ArrowRight className="h-3.5 w-3.5 text-muted-foreground" />
+            </button>
+          )}
+        </div>
       </div>
     </div>
   );
 }
 
-function ThreeDayView({ baseDate }: { baseDate: Date }) {
+function ThreeDayView({ baseDate, onEditTask }: { baseDate: Date; onEditTask: (taskId: string) => void }) {
   const { getBlocksForDate, getCategory } = useDayFlow();
 
   const days = [0, 1, 2].map((offset) => {
@@ -445,12 +484,19 @@ function ThreeDayView({ baseDate }: { baseDate: Date }) {
                   const dotClass = CATEGORY_COLOR_MAP[colorKey] || "bg-muted";
                   const bgClass = CATEGORY_COLOR_BG_MAP[colorKey] || "bg-secondary";
                   return (
-                    <div key={block.id} className={`flex items-center gap-2 rounded-lg px-2.5 py-1.5 ${bgClass}`}>
+                    <div
+                      key={block.id}
+                      className={`flex items-center gap-2 rounded-lg px-2.5 py-1.5 ${bgClass} ${block.taskId ? "cursor-pointer active:opacity-80" : ""}`}
+                      onClick={block.taskId ? () => onEditTask(block.taskId!) : undefined}
+                    >
                       <div className={`cat-dot ${dotClass}`} />
                       <span className="text-xs font-medium text-foreground truncate flex-1">{block.title}</span>
                       <span className="text-meta text-[10px] text-muted-foreground shrink-0">
                         {formatHour(block.startHour)}
                       </span>
+                      {block.taskId && (
+                        <Pencil className="h-3 w-3 text-muted-foreground opacity-40 shrink-0" />
+                      )}
                     </div>
                   );
                 })}
@@ -463,15 +509,12 @@ function ThreeDayView({ baseDate }: { baseDate: Date }) {
   );
 }
 
-function WeekView({ baseDate }: { baseDate: Date }) {
+function WeekView({ baseDate, onEditTask }: { baseDate: Date; onEditTask: (taskId: string) => void }) {
   const { getBlocksForDate, getCategory } = useDayFlow();
 
-  const monday = new Date(baseDate);
-  const dayOfWeek = monday.getDay();
-  monday.setDate(monday.getDate() - (dayOfWeek === 0 ? 6 : dayOfWeek - 1));
-
+  // Start from current day (rolling 7-day window)
   const days = Array.from({ length: 7 }, (_, i) => {
-    const d = new Date(monday);
+    const d = new Date(baseDate);
     d.setDate(d.getDate() + i);
     return d;
   });
@@ -503,12 +546,19 @@ function WeekView({ baseDate }: { baseDate: Date }) {
                   const cat = getCategory(block.categoryId);
                   const dotClass = CATEGORY_COLOR_MAP[cat?.color || "teal"] || "bg-muted";
                   return (
-                    <div key={block.id} className="flex items-center gap-2">
+                    <div
+                      key={block.id}
+                      className={`flex items-center gap-2 ${block.taskId ? "cursor-pointer active:opacity-80" : ""}`}
+                      onClick={block.taskId ? () => onEditTask(block.taskId!) : undefined}
+                    >
                       <div className={`cat-dot ${dotClass}`} />
                       <span className="text-xs text-foreground truncate">{block.title}</span>
                       <span className="text-meta text-[10px] text-muted-foreground ml-auto">
                         {formatHour(block.startHour)}
                       </span>
+                      {block.taskId && (
+                        <Pencil className="h-2.5 w-2.5 text-muted-foreground opacity-40 shrink-0" />
+                      )}
                     </div>
                   );
                 })}
@@ -523,4 +573,3 @@ function WeekView({ baseDate }: { baseDate: Date }) {
     </div>
   );
 }
-

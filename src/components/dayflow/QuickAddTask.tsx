@@ -41,7 +41,8 @@ export default function QuickAddTask({ open, onClose }: Props) {
     const now = new Date();
     const currentHour = now.getHours() + now.getMinutes() / 60;
     const durationHours = (task.estimatedMinutes || 30) / 60;
-    const startHour = findNextAvailableSlot(timeBlocks, durationHours, task.preferredTime, today, currentHour);
+    const category = preferences.categories.find((c) => c.id === categoryId);
+    const startHour = findNextAvailableSlot(timeBlocks, durationHours, task.preferredTime, today, currentHour, category?.schedulingWindow);
     const block: TimeBlock = {
       id: `b-manual-${task.id}`,
       taskId: task.id,
