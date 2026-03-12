@@ -66,9 +66,10 @@ export default function ChatPage() {
         timestamp: new Date().toISOString(),
       };
       addChatMessage(aiMsg);
-    } catch (err: any) {
+    } catch (err: unknown) {
       console.error("Planner AI error:", err);
-      toast.error(err.message || "Something went wrong with the AI planner.");
+      const message = err instanceof Error ? err.message : "Something went wrong with the AI planner.";
+      toast.error(message);
 
       const errorMsg: ChatMessage = {
         id: `msg-${Date.now() + 1}`,
@@ -174,6 +175,7 @@ export default function ChatPage() {
         <div className="flex items-end gap-2 rounded-2xl bg-secondary p-1.5 pl-4">
           <textarea
             ref={textareaRef}
+            aria-label="Message to planner"
             value={input}
             onChange={(e) => setInput(e.target.value)}
             onKeyDown={(e) => {
@@ -188,6 +190,7 @@ export default function ChatPage() {
             style={{ maxHeight: 160 }}
           />
           <button
+            aria-label="Send message"
             onClick={send}
             disabled={!input.trim() || isTyping}
             className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-primary disabled:opacity-40 transition-opacity active:scale-95"

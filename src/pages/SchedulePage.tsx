@@ -1,8 +1,9 @@
-import { useState, useMemo, useRef, useCallback } from "react";
+import { useState, useMemo, useRef, useCallback, useEffect } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import { useDayFlow } from "@/context/DayFlowContext";
 import { CATEGORY_COLOR_MAP, CATEGORY_COLOR_BG_MAP, TimeBlock } from "@/types/dayflow";
 import { ChevronLeft, ChevronRight, Check } from "lucide-react";
+import { formatHour } from "@/lib/utils";
 
 const HOUR_HEIGHT = 64; // px per hour
 const START_HOUR = 6;
@@ -42,18 +43,21 @@ export default function SchedulePage() {
           </div>
           <div className="flex items-center gap-1">
             <button
+              aria-label="Previous day"
               onClick={() => setDateOffset((d) => d - 1)}
               className="tap-target flex items-center justify-center rounded-xl p-2 active:bg-secondary"
             >
               <ChevronLeft className="h-5 w-5 text-muted-foreground" />
             </button>
             <button
+              aria-label="Go to today"
               onClick={() => setDateOffset(0)}
               className="tap-target rounded-xl px-3 py-1.5 text-sm font-medium text-primary active:bg-secondary"
             >
               Today
             </button>
             <button
+              aria-label="Next day"
               onClick={() => setDateOffset((d) => d + 1)}
               className="tap-target flex items-center justify-center rounded-xl p-2 active:bg-secondary"
             >
@@ -161,6 +165,13 @@ function DayView({ dateStr }: { dateStr: string }) {
     return snapToGrid(hour);
   }, []);
 
+  const cleanupRef = useRef<(() => void) | null>(null);
+
+  // Clean up drag listeners if component unmounts mid-drag
+  useEffect(() => {
+    return () => { cleanupRef.current?.(); };
+  }, []);
+
   const handlePointerDown = useCallback((blockId: string, e: React.PointerEvent) => {
     if (blocks.find(b => b.id === blockId)?.isFixed) return;
     e.preventDefault();
@@ -177,6 +188,12 @@ function DayView({ dateStr }: { dateStr: string }) {
       }
     };
 
+    const cleanup = () => {
+      window.removeEventListener("pointermove", onMove);
+      window.removeEventListener("pointerup", onUp);
+      cleanupRef.current = null;
+    };
+
     const onUp = (ev: PointerEvent) => {
       const h = getHourFromPointer(ev.clientY);
       const block = blocks.find(b => b.id === blockId);
@@ -186,12 +203,12 @@ function DayView({ dateStr }: { dateStr: string }) {
       }
       setDraggingId(null);
       setDragPreviewHour(null);
-      window.removeEventListener("pointermove", onMove);
-      window.removeEventListener("pointerup", onUp);
+      cleanup();
     };
 
     window.addEventListener("pointermove", onMove);
     window.addEventListener("pointerup", onUp);
+    cleanupRef.current = cleanup;
   }, [blocks, getHourFromPointer, updateTimeBlock]);
 
   return (
@@ -334,6 +351,7 @@ function ScheduleBlock({
       <div className="flex items-start gap-2 h-full">
         {block.type === "task" && onToggle && (
           <button
+            aria-label={completed ? `Mark "${block.title}" incomplete` : `Complete "${block.title}"`}
             onClick={(e) => {
               e.stopPropagation();
               onToggle();
@@ -481,10 +499,3 @@ function WeekView({ baseDate }: { baseDate: Date }) {
   );
 }
 
-function formatHour(h: number): string {
-  const hours = Math.floor(h);
-  const mins = Math.round((h - hours) * 60);
-  const ampm = hours < 12 ? "AM" : "PM";
-  const display = hours === 0 ? 12 : hours > 12 ? hours - 12 : hours;
-  return mins > 0 ? `${display}:${mins.toString().padStart(2, "0")} ${ampm}` : `${display} ${ampm}`;
-}

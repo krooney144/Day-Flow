@@ -84,7 +84,7 @@ export default function QuickAddTask({ open, onClose }: Props) {
 
             <div className="flex items-center justify-between mb-4">
               <h2 className="text-display text-lg text-foreground">Add task</h2>
-              <button onClick={onClose} className="tap-target flex items-center justify-center rounded-xl p-2 active:bg-secondary">
+              <button aria-label="Close" onClick={onClose} className="tap-target flex items-center justify-center rounded-xl p-2 active:bg-secondary">
                 <X className="h-5 w-5 text-muted-foreground" />
               </button>
             </div>
@@ -93,6 +93,7 @@ export default function QuickAddTask({ open, onClose }: Props) {
               <input
                 autoFocus
                 type="text"
+                aria-label="Task title"
                 value={title}
                 onChange={(e) => setTitle(e.target.value)}
                 onKeyDown={(e) => e.key === "Enter" && handleAdd()}

@@ -38,7 +38,9 @@ function loadState(): DayFlowState {
       const parsed = JSON.parse(stored);
       return { ...getDefaultState(), ...parsed };
     }
-  } catch {}
+  } catch (e) {
+    console.error("Failed to load state from localStorage:", e);
+  }
   return getDefaultState();
 }
 
@@ -57,7 +59,9 @@ function getDefaultState(): DayFlowState {
 function saveState(state: DayFlowState) {
   try {
     localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
-  } catch {}
+  } catch (e) {
+    console.error("Failed to save state to localStorage:", e);
+  }
 }
 
 const today = new Date().toISOString().split("T")[0];
