@@ -40,6 +40,23 @@ export async function callPlannerAI(context: PlannerContext): Promise<PlannerRes
 
 // findNextAvailableSlot is now imported from scheduling-utils.ts
 
+/**
+ * Determine the best date to auto-schedule a task on.
+ * If past work hours, defaults to tomorrow; otherwise today.
+ */
+function getAutoScheduleDate(preferences: { workEndHour?: number }): string {
+  const now = new Date();
+  const currentHour = now.getHours() + now.getMinutes() / 60;
+  const workEnd = preferences.workEndHour ?? 18;
+
+  if (currentHour >= workEnd) {
+    const tomorrow = new Date(now);
+    tomorrow.setDate(tomorrow.getDate() + 1);
+    return tomorrow.toISOString().split("T")[0];
+  }
+  return now.toISOString().split("T")[0];
+}
+
 export function executeToolCalls(
   toolCalls: ToolCall[],
   store: {
@@ -53,6 +70,7 @@ export function executeToolCalls(
     addTimeBlocks: (blocks: TimeBlock[]) => void;
     updatePreferences: (prefs: Partial<UserPreferences>) => void;
     addProject: (categoryId: string, projectName: string) => void;
+    preferences?: UserPreferences;
   },
   existingTimeBlocks: TimeBlock[] = []
 ): string[] {
@@ -62,7 +80,10 @@ export function executeToolCalls(
   const currentHour = now.getHours() + now.getMinutes() / 60;
   const hasScheduleCall = toolCalls.some((tc) => tc.name === "generate_schedule");
   let createdTasks: Task[] = [];
+  // Track all blocks across all dates
   let allBlocks = [...existingTimeBlocks];
+  // Track which dates were scheduled by AI (to know which dates got replaced)
+  const scheduledDates = new Set<string>();
 
   for (const tc of toolCalls) {
     switch (tc.name) {
@@ -119,20 +140,29 @@ export function executeToolCalls(
         break;
       }
       case "generate_schedule": {
-        const blocks: TimeBlock[] = tc.arguments.blocks.map((b: any, i: number) => ({
+        const targetDate = tc.arguments.date || today;
+        scheduledDates.add(targetDate);
+
+        const newBlocks: TimeBlock[] = tc.arguments.blocks.map((b: any, i: number) => ({
           id: `b-${Date.now()}-${i}`,
           title: b.title,
           categoryId: b.categoryId || "",
-          date: tc.arguments.date || today,
+          date: targetDate,
           startHour: b.startHour,
           durationHours: b.durationHours,
           isFixed: b.isFixed || false,
           type: b.type || "task",
           taskId: b.taskId,
         }));
-        store.setTimeBlocks(blocks);
-        allBlocks = blocks;
-        summaries.push("Generated schedule");
+
+        // Merge: keep blocks for OTHER dates, replace blocks for THIS date
+        allBlocks = [
+          ...allBlocks.filter((b) => b.date !== targetDate),
+          ...newBlocks,
+        ];
+        store.setTimeBlocks(allBlocks);
+        const dateLabel = targetDate === today ? "today" : targetDate;
+        summaries.push(`Generated schedule for ${dateLabel}`);
         break;
       }
       case "update_preferences": {
@@ -167,19 +197,15 @@ export function executeToolCalls(
   // Reconcile task IDs: if AI called both create_tasks and generate_schedule,
   // the schedule blocks may reference AI-invented IDs instead of real ones.
   if (createdTasks.length > 0 && hasScheduleCall) {
-    // Build title → real ID map
     const titleToId = new Map<string, Task>();
     for (const task of createdTasks) {
       titleToId.set(task.title.toLowerCase().trim(), task);
     }
 
-    // Patch schedule blocks with correct taskIds by matching on title
     for (const block of allBlocks) {
       if (!block.taskId) continue;
-      // Check if the taskId is a real one (matches a created task)
       const isReal = createdTasks.some((t) => t.id === block.taskId);
       if (isReal) continue;
-      // Try to match by title
       const matchedTask = titleToId.get(block.title.toLowerCase().trim());
       if (matchedTask) {
         block.taskId = matchedTask.id;
@@ -187,24 +213,30 @@ export function executeToolCalls(
       }
     }
 
-    // Find any created tasks still missing a schedule block
+    // Find created tasks missing a schedule block, auto-schedule them
     const scheduledIds = new Set(allBlocks.filter((b) => b.taskId).map((b) => b.taskId));
     const unscheduled = createdTasks.filter((t) => !scheduledIds.has(t.id));
     for (const task of unscheduled) {
+      // Pick the best date: use a scheduled date if available, otherwise auto-detect
+      const targetDate = scheduledDates.size > 0
+        ? [...scheduledDates][0]
+        : getAutoScheduleDate(store.preferences || {});
+      const isToday = targetDate === today;
+      const minHour = isToday ? currentHour : undefined;
       const durationHours = (task.estimatedMinutes || 30) / 60;
       const startHour = findNextAvailableSlot(
         allBlocks,
         durationHours,
         task.preferredTime,
-        today,
-        currentHour
+        targetDate,
+        minHour
       );
       allBlocks.push({
         id: `b-auto-${task.id}`,
         taskId: task.id,
         title: task.title,
         categoryId: task.categoryId,
-        date: today,
+        date: targetDate,
         startHour,
         durationHours,
         isFixed: false,
@@ -212,32 +244,36 @@ export function executeToolCalls(
       });
     }
 
-    // Re-set all blocks with corrected data
     store.setTimeBlocks(allBlocks);
     if (unscheduled.length > 0) {
       summaries.push(`Auto-scheduled ${unscheduled.length} missed task${unscheduled.length > 1 ? "s" : ""}`);
     }
   }
 
-  // Auto-schedule created tasks if AI didn't call generate_schedule — only "today" horizon
+  // Auto-schedule created tasks if AI didn't call generate_schedule
   if (createdTasks.length > 0 && !hasScheduleCall) {
-    const todayTasks = createdTasks.filter((t) => t.horizon === "today" || !t.horizon);
+    const schedulableTasks = createdTasks.filter((t) => t.horizon === "today" || t.horizon === "soon" || !t.horizon);
     const autoBlocks: TimeBlock[] = [];
-    for (const task of todayTasks) {
+
+    for (const task of schedulableTasks) {
+      // If past work hours, schedule for tomorrow; otherwise today
+      const targetDate = getAutoScheduleDate(store.preferences || {});
+      const isToday = targetDate === today;
+      const minHour = isToday ? currentHour : undefined;
       const durationHours = (task.estimatedMinutes || 30) / 60;
       const startHour = findNextAvailableSlot(
         [...allBlocks, ...autoBlocks],
         durationHours,
         task.preferredTime,
-        today,
-        currentHour
+        targetDate,
+        minHour
       );
       const block: TimeBlock = {
         id: `b-auto-${task.id}`,
         taskId: task.id,
         title: task.title,
         categoryId: task.categoryId,
-        date: today,
+        date: targetDate,
         startHour,
         durationHours,
         isFixed: false,
