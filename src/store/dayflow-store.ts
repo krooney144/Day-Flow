@@ -1,4 +1,4 @@
-// DayFlow store — localStorage + cloud-backed state management
+// DayFlow store — localStorage + Supabase-backed state management
 import { useState, useCallback, useEffect, useRef } from "react";
 import {
   Task,
@@ -8,10 +8,14 @@ import {
   DEFAULT_CATEGORIES,
   Category,
 } from "@/types/dayflow";
-import { loadFromCloud, saveToCloud, clearCloud } from "@/lib/cloud-sync";
+import {
+  loadFromCloud,
+  saveToCloud,
+  clearCloud,
+  subscribeToChanges,
+} from "@/lib/cloud-sync";
 import { toast } from "sonner";
 
-// Simple global state with localStorage persistence + cloud sync
 const STORAGE_KEY = "dayflow-state";
 
 interface DayFlowState {
@@ -41,7 +45,6 @@ function cleanupStaleData(state: DayFlowState): { state: DayFlowState; cleaned: 
   const cutoff = Date.now() - THIRTY_DAYS_MS;
   const cutoffDate = new Date(cutoff).toISOString();
 
-  // Remove completed/dropped tasks older than 30 days
   const before = state.tasks.length;
   const tasks = state.tasks.filter((t) => {
     if (t.status !== "completed" && t.status !== "dropped") return true;
@@ -49,13 +52,11 @@ function cleanupStaleData(state: DayFlowState): { state: DayFlowState; cleaned: 
     return doneDate > cutoffDate;
   });
 
-  // Remove orphaned time blocks for deleted tasks
   const taskIds = new Set(tasks.map((t) => t.id));
   const timeBlocks = state.timeBlocks.filter(
     (b) => !b.taskId || taskIds.has(b.taskId)
   );
 
-  // Prune custom projects with no active tasks for 30+ days
   const activeProjects = new Set(
     tasks.filter((t) => t.status === "active" && t.project).map((t) => `${t.categoryId}:${t.project}`)
   );
@@ -85,8 +86,8 @@ function loadState(): DayFlowState {
 function getDefaultState(): DayFlowState {
   return {
     isAuthenticated: false,
-    tasks: SAMPLE_TASKS,
-    timeBlocks: generateSampleBlocks(),
+    tasks: [],
+    timeBlocks: [],
     chatMessages: [],
     preferences: defaultPreferences,
     hasSeenRollover: false,
@@ -106,89 +107,178 @@ function saveState(state: DayFlowState) {
 
 const today = new Date().toISOString().split("T")[0];
 
-const SAMPLE_TASKS: Task[] = [
-  {
-    id: "t1", title: "Review project proposal", categoryId: "work", project: "Marble Point", status: "active",
-    priority: 1, estimatedMinutes: 45, canSplit: false, notes: "", preferredTime: "morning",
-    energyNeeded: "high", recurring: false, createdAt: today, rolloverCount: 0, horizon: "today",
-  },
-  {
-    id: "t2", title: "Grocery shopping", categoryId: "life-admin", project: "Food Planning", status: "active",
-    priority: 3, estimatedMinutes: 40, canSplit: false, notes: "Get veggies and protein", preferredTime: "afternoon",
-    energyNeeded: "low", recurring: false, createdAt: today, rolloverCount: 0, horizon: "today",
-  },
-  {
-    id: "t3", title: "30 min yoga", categoryId: "life-admin", project: "Workouts", status: "active",
-    priority: 2, estimatedMinutes: 30, canSplit: false, notes: "", preferredTime: "morning",
-    energyNeeded: "medium", recurring: true, createdAt: today, rolloverCount: 0, horizon: "today",
-  },
-  {
-    id: "t4", title: "Call insurance company", categoryId: "life-admin", project: "House Tasks", status: "active",
-    priority: 2, estimatedMinutes: 20, canSplit: false, notes: "Ask about claim #4421", preferredTime: "afternoon",
-    energyNeeded: "low", recurring: false, createdAt: today, rolloverCount: 2, horizon: "today",
-  },
-  {
-    id: "t5", title: "Coffee with Sarah", categoryId: "social", project: "Fun", status: "active",
-    priority: 3, estimatedMinutes: 60, canSplit: false, notes: "", preferredTime: "afternoon",
-    energyNeeded: "low", recurring: false, createdAt: today, rolloverCount: 0, horizon: "today",
-  },
-];
-
-function generateSampleBlocks(): TimeBlock[] {
-  return [
-    { id: "b1", taskId: "t3", title: "30 min yoga", categoryId: "life-admin", date: today, startHour: 7, durationHours: 0.5, isFixed: false, type: "task" },
-    { id: "b-break1", title: "Morning reset", categoryId: "", date: today, startHour: 7.5, durationHours: 0.25, isFixed: false, type: "break" },
-    { id: "b2", taskId: "t1", title: "Review project proposal", categoryId: "work", date: today, startHour: 8, durationHours: 0.75, isFixed: false, type: "task" },
-    { id: "b-meeting", title: "Team standup", categoryId: "work", date: today, startHour: 11, durationHours: 0.5, isFixed: true, type: "event" },
-    { id: "b-lunch", title: "Lunch", categoryId: "", date: today, startHour: 12, durationHours: 0.75, isFixed: false, type: "meal" },
-    { id: "b4", taskId: "t4", title: "Call insurance company", categoryId: "life-admin", date: today, startHour: 13, durationHours: 0.5, isFixed: false, type: "task" },
-    { id: "b5", taskId: "t2", title: "Grocery shopping", categoryId: "life-admin", date: today, startHour: 14, durationHours: 0.75, isFixed: false, type: "task" },
-    { id: "b6", taskId: "t5", title: "Coffee with Sarah", categoryId: "social", date: today, startHour: 15.5, durationHours: 1, isFixed: false, type: "task" },
-  ];
-}
-
 export function useDayFlowStore() {
   const [state, setStateRaw] = useState<DayFlowState>(loadState);
   const cloudSaveTimer = useRef<ReturnType<typeof setTimeout>>();
+  // Prevents real-time events from triggering a sync back to Supabase
+  const isRemoteUpdate = useRef(false);
 
-  // Load from cloud on mount — cloud wins if newer, then run cleanup
-  useEffect(() => {
-    loadFromCloud<DayFlowState>().then((cloudState) => {
-      if (cloudState && (cloudState.lastModified || 0) > (state.lastModified || 0)) {
-        const merged = { ...getDefaultState(), ...cloudState };
-        setStateRaw(merged);
-        saveState(merged);
-      }
-    }).finally(() => {
-      // Run 30-day cleanup after state is settled
-      setStateRaw((current) => {
-        const { state: cleaned, cleaned: count } = cleanupStaleData(current);
-        if (count > 0) {
-          saveState(cleaned);
-          saveToCloud(cleaned);
-          setTimeout(() => {
-            toast(`Cleaned up ${count} old task${count > 1 ? "s" : ""}`);
-          }, 1000);
-          return cleaned;
-        }
-        return current;
+  // Helper: update state + localStorage only (no cloud sync)
+  const setStateLocal = useCallback(
+    (updater: (prev: DayFlowState) => DayFlowState) => {
+      setStateRaw((prev) => {
+        const next = { ...updater(prev), lastModified: Date.now() };
+        saveState(next);
+        return next;
       });
+    },
+    []
+  );
+
+  // Load from Supabase on mount, subscribe to real-time
+  useEffect(() => {
+    let unsubscribe: (() => void) | undefined;
+
+    // 1. Fetch all data from Supabase
+    loadFromCloud()
+      .then((cloud) => {
+        if (cloud) {
+          setStateRaw((prev) => {
+            const next: DayFlowState = {
+              ...prev,
+              tasks: cloud.tasks.length > 0 ? cloud.tasks : prev.tasks,
+              timeBlocks: cloud.timeBlocks.length > 0 ? cloud.timeBlocks : prev.timeBlocks,
+              chatMessages: cloud.chatMessages.length > 0 ? cloud.chatMessages : prev.chatMessages,
+              preferences: cloud.preferences,
+              customProjects: cloud.customProjects,
+              hasSeenRollover: cloud.hasSeenRollover,
+              lastOpenDate: cloud.lastOpenDate,
+              lastModified: Date.now(),
+            };
+            saveState(next);
+            return next;
+          });
+        }
+      })
+      .finally(() => {
+        // 30-day cleanup
+        setStateRaw((current) => {
+          const { state: cleaned, cleaned: count } = cleanupStaleData(current);
+          if (count > 0) {
+            saveState(cleaned);
+            saveToCloud(cleaned);
+            setTimeout(() => {
+              toast(`Cleaned up ${count} old task${count > 1 ? "s" : ""}`);
+            }, 1000);
+            return cleaned;
+          }
+          return current;
+        });
+      });
+
+    // 2. Subscribe to real-time changes from other devices
+    unsubscribe = subscribeToChanges({
+      onTaskChange: (task, eventType) => {
+        isRemoteUpdate.current = true;
+        setStateLocal((prev) => {
+          let tasks: Task[];
+          if (eventType === "DELETE") {
+            tasks = prev.tasks.filter((t) => t.id !== task.id);
+          } else {
+            const exists = prev.tasks.some((t) => t.id === task.id);
+            tasks = exists
+              ? prev.tasks.map((t) => (t.id === task.id ? task : t))
+              : [...prev.tasks, task];
+          }
+          return { ...prev, tasks };
+        });
+        isRemoteUpdate.current = false;
+      },
+      onBlockChange: (block, eventType) => {
+        isRemoteUpdate.current = true;
+        setStateLocal((prev) => {
+          let timeBlocks: TimeBlock[];
+          if (eventType === "DELETE") {
+            timeBlocks = prev.timeBlocks.filter((b) => b.id !== block.id);
+          } else {
+            const exists = prev.timeBlocks.some((b) => b.id === block.id);
+            timeBlocks = exists
+              ? prev.timeBlocks.map((b) => (b.id === block.id ? block : b))
+              : [...prev.timeBlocks, block];
+          }
+          return { ...prev, timeBlocks };
+        });
+        isRemoteUpdate.current = false;
+      },
+      onMessageChange: (msg, eventType) => {
+        isRemoteUpdate.current = true;
+        setStateLocal((prev) => {
+          let chatMessages: ChatMessage[];
+          if (eventType === "DELETE") {
+            chatMessages = prev.chatMessages.filter((m) => m.id !== msg.id);
+          } else {
+            const exists = prev.chatMessages.some((m) => m.id === msg.id);
+            chatMessages = exists
+              ? prev.chatMessages.map((m) => (m.id === msg.id ? msg : m))
+              : [...prev.chatMessages, msg];
+          }
+          return { ...prev, chatMessages };
+        });
+        isRemoteUpdate.current = false;
+      },
+      onProfileChange: (data) => {
+        isRemoteUpdate.current = true;
+        setStateLocal((prev) => ({
+          ...prev,
+          preferences: data.preferences,
+          customProjects: data.customProjects,
+          hasSeenRollover: data.hasSeenRollover,
+          lastOpenDate: data.lastOpenDate,
+        }));
+        isRemoteUpdate.current = false;
+      },
     });
+
+    return () => {
+      unsubscribe?.();
+    };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  const setState = useCallback((updater: (prev: DayFlowState) => DayFlowState) => {
-    setStateRaw((prev) => {
-      const next = { ...updater(prev), lastModified: Date.now() };
-      saveState(next);
-      // Debounced cloud save (1 second)
-      if (cloudSaveTimer.current) clearTimeout(cloudSaveTimer.current);
-      cloudSaveTimer.current = setTimeout(() => {
-        saveToCloud(next);
-      }, 1000);
-      return next;
-    });
-  }, []);
+  // Also re-fetch from Supabase when tab regains focus (handles phone ↔ laptop switching)
+  useEffect(() => {
+    const handleVisibility = () => {
+      if (document.visibilityState === "visible") {
+        loadFromCloud().then((cloud) => {
+          if (cloud) {
+            setStateLocal((prev) => ({
+              ...prev,
+              tasks: cloud.tasks.length > 0 ? cloud.tasks : prev.tasks,
+              timeBlocks: cloud.timeBlocks.length > 0 ? cloud.timeBlocks : prev.timeBlocks,
+              chatMessages: cloud.chatMessages.length > 0 ? cloud.chatMessages : prev.chatMessages,
+              preferences: cloud.preferences,
+              customProjects: cloud.customProjects,
+              hasSeenRollover: cloud.hasSeenRollover,
+              lastOpenDate: cloud.lastOpenDate,
+            }));
+          }
+        });
+      }
+    };
+    document.addEventListener("visibilitychange", handleVisibility);
+    return () => document.removeEventListener("visibilitychange", handleVisibility);
+  }, [setStateLocal]);
+
+  // Main setState: updates React state + localStorage + debounced Supabase sync
+  const setState = useCallback(
+    (updater: (prev: DayFlowState) => DayFlowState) => {
+      setStateRaw((prev) => {
+        const next = { ...updater(prev), lastModified: Date.now() };
+        saveState(next);
+
+        // Skip cloud sync if this change originated from a real-time event
+        if (!isRemoteUpdate.current) {
+          if (cloudSaveTimer.current) clearTimeout(cloudSaveTimer.current);
+          cloudSaveTimer.current = setTimeout(() => {
+            saveToCloud(next);
+          }, 1000);
+        }
+
+        return next;
+      });
+    },
+    []
+  );
 
   const authenticate = useCallback(() => {
     setState((s) => ({ ...s, isAuthenticated: true }));
@@ -311,7 +401,6 @@ export function useDayFlowStore() {
           return task ? { ...task, priority: i + 1 } : null;
         })
         .filter(Boolean) as Task[];
-      // Keep tasks not in the reorder list unchanged
       const reorderedIds = new Set(orderedIds);
       const rest = s.tasks.filter((t) => !reorderedIds.has(t.id));
       return { ...s, tasks: [...reordered, ...rest] };
