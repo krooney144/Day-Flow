@@ -1,0 +1,499 @@
+import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
+
+const corsHeaders = {
+  "Access-Control-Allow-Origin": "*",
+  "Access-Control-Allow-Headers":
+    "authorization, x-client-info, apikey, content-type, x-supabase-client-platform, x-supabase-client-platform-version, x-supabase-client-runtime, x-supabase-client-runtime-version",
+};
+
+const PLANNER_TOOLS = [
+  {
+    type: "function",
+    function: {
+      name: "create_tasks",
+      description:
+        "Create one or more new tasks from the user's input. Use when the user mentions things they need to do. Set horizon to control when it belongs: 'today' for must-do-today, 'soon' for next 2-3 days, 'this-week' for this week, 'backlog' for someday.",
+      parameters: {
+        type: "object",
+        properties: {
+          tasks: {
+            type: "array",
+            items: {
+              type: "object",
+              properties: {
+                title: { type: "string", description: "Short task title" },
+                categoryId: {
+                  type: "string",
+                  enum: ["work", "school", "social", "life-admin"],
+                },
+                project: {
+                  type: "string",
+                  description: "Sub-project within the category. Work: Marble Point, Black Island, Work Admin. School: NVL, Grad Thesis, School Admin. Social: Trips, Networking, Fun, Phone Calls. Life Admin: Food Planning, Workouts, House Tasks, Photo Posts.",
+                },
+                priority: {
+                  type: "number",
+                  description: "1 (highest) to 5 (lowest)",
+                },
+                estimatedMinutes: { type: "number" },
+                preferredTime: {
+                  type: "string",
+                  enum: ["morning", "afternoon", "evening", "any"],
+                },
+                notes: { type: "string" },
+                horizon: {
+                  type: "string",
+                  enum: ["today", "soon", "this-week", "backlog"],
+                  description: "When this task belongs: today = must happen today, soon = next 2-3 days, this-week = this week, backlog = someday/later",
+                },
+                deadline: {
+                  type: "string",
+                  description: "Optional deadline in YYYY-MM-DD format",
+                },
+              },
+              required: ["title", "categoryId", "priority", "estimatedMinutes", "preferredTime", "horizon"],
+              additionalProperties: false,
+            },
+          },
+        },
+        required: ["tasks"],
+        additionalProperties: false,
+      },
+    },
+  },
+  {
+    type: "function",
+    function: {
+      name: "update_task",
+      description: "Edit an existing task's properties. Use the task ID from context.",
+      parameters: {
+        type: "object",
+        properties: {
+          taskId: { type: "string" },
+          title: { type: "string" },
+          categoryId: { type: "string", enum: ["work", "school", "social", "life-admin"] },
+          project: { type: "string" },
+          priority: { type: "number" },
+          estimatedMinutes: { type: "number" },
+          preferredTime: { type: "string", enum: ["morning", "afternoon", "evening", "any"] },
+          notes: { type: "string" },
+          horizon: { type: "string", enum: ["today", "soon", "this-week", "backlog"] },
+        },
+        required: ["taskId"],
+        additionalProperties: false,
+      },
+    },
+  },
+  {
+    type: "function",
+    function: {
+      name: "complete_task",
+      description: "Mark a task as completed.",
+      parameters: {
+        type: "object",
+        properties: {
+          taskId: { type: "string" },
+        },
+        required: ["taskId"],
+        additionalProperties: false,
+      },
+    },
+  },
+  {
+    type: "function",
+    function: {
+      name: "defer_task",
+      description: "Defer/postpone a task to later, incrementing its rollover count.",
+      parameters: {
+        type: "object",
+        properties: {
+          taskId: { type: "string" },
+        },
+        required: ["taskId"],
+        additionalProperties: false,
+      },
+    },
+  },
+  {
+    type: "function",
+    function: {
+      name: "drop_task",
+      description: "Drop/remove a task the user no longer wants to do.",
+      parameters: {
+        type: "object",
+        properties: {
+          taskId: { type: "string" },
+        },
+        required: ["taskId"],
+        additionalProperties: false,
+      },
+    },
+  },
+  {
+    type: "function",
+    function: {
+      name: "reprioritize_tasks",
+      description: "Reorder the priorities of multiple tasks.",
+      parameters: {
+        type: "object",
+        properties: {
+          tasks: {
+            type: "array",
+            items: {
+              type: "object",
+              properties: {
+                taskId: { type: "string" },
+                priority: { type: "number" },
+              },
+              required: ["taskId", "priority"],
+              additionalProperties: false,
+            },
+          },
+        },
+        required: ["tasks"],
+        additionalProperties: false,
+      },
+    },
+  },
+  {
+    type: "function",
+    function: {
+      name: "generate_schedule",
+      description:
+        "Generate a day schedule as time blocks. Only schedule tasks with horizon 'today' or 'soon'. Leave 'this-week' and 'backlog' items on the task list only. Include meals, breaks, and transition buffers. NEVER schedule blocks before the current time.",
+      parameters: {
+        type: "object",
+        properties: {
+          date: { type: "string", description: "YYYY-MM-DD" },
+          blocks: {
+            type: "array",
+            items: {
+              type: "object",
+              properties: {
+                title: { type: "string" },
+                categoryId: { type: "string" },
+                startHour: { type: "number", description: "0-23, decimals for partial hours (e.g. 9.5 = 9:30). MUST be after current time." },
+                durationHours: { type: "number" },
+                type: { type: "string", enum: ["task", "meal", "break", "transition", "event"] },
+                taskId: { type: "string", description: "Link to existing task ID if applicable" },
+                isFixed: { type: "boolean" },
+              },
+              required: ["title", "categoryId", "startHour", "durationHours", "type"],
+              additionalProperties: false,
+            },
+          },
+        },
+        required: ["date", "blocks"],
+        additionalProperties: false,
+      },
+    },
+  },
+  {
+    type: "function",
+    function: {
+      name: "update_preferences",
+      description: "Update user preferences like work hours, workout time, etc.",
+      parameters: {
+        type: "object",
+        properties: {
+          workStartHour: { type: "number" },
+          workEndHour: { type: "number" },
+          lunchHour: { type: "number" },
+          workoutTime: { type: "string", enum: ["morning", "afternoon", "evening", "any"] },
+          defaultTaskDuration: { type: "number" },
+        },
+        additionalProperties: false,
+      },
+    },
+  },
+  {
+    type: "function",
+    function: {
+      name: "add_buffer_block",
+      description: "Add a break, travel, or transition block to the schedule.",
+      parameters: {
+        type: "object",
+        properties: {
+          title: { type: "string" },
+          date: { type: "string" },
+          startHour: { type: "number" },
+          durationHours: { type: "number" },
+          type: { type: "string", enum: ["break", "transition", "meal"] },
+        },
+        required: ["title", "date", "startHour", "durationHours", "type"],
+        additionalProperties: false,
+      },
+    },
+  },
+];
+
+function buildSystemPrompt(
+  currentTasks: any[],
+  preferences: any,
+  timeBlocks: any[]
+) {
+  const now = new Date();
+  const dayNames = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"];
+  const today = now.toISOString().split("T")[0];
+  const dayName = dayNames[now.getDay()];
+  const currentHour = now.getHours() + now.getMinutes() / 60;
+  const timeStr = now.toLocaleTimeString("en-US", { hour: "2-digit", minute: "2-digit" });
+
+  const taskList = currentTasks.length > 0
+    ? currentTasks
+        .map(
+          (t: any) =>
+            `- [${t.id}] "${t.title}" (${t.categoryId}${t.project ? `/${t.project}` : ""}, P${t.priority}, ${t.estimatedMinutes}min, status: ${t.status}, horizon: ${t.horizon || "today"}, preferred: ${t.preferredTime}${t.rolloverCount > 0 ? `, rolled over ${t.rolloverCount}x` : ""}${t.deadline ? `, deadline: ${t.deadline}` : ""})`
+        )
+        .join("\n")
+    : "No tasks yet.";
+
+  const blockList = timeBlocks.length > 0
+    ? timeBlocks
+        .map(
+          (b: any) =>
+            `- ${b.startHour}:00 ${b.title} (${b.type}, ${b.durationHours}h${b.taskId ? `, task: ${b.taskId}` : ""})`
+        )
+        .join("\n")
+    : "No schedule blocks yet.";
+
+  return `You are a calm, grounded daily planner assistant. You help people organize their day realistically and kindly.
+
+You schedule like a realistic human assistant, not a productivity maximizer.
+
+Current date: ${today} (${dayName})
+Current time: ${timeStr}
+Current hour (decimal): ${currentHour.toFixed(2)}
+
+CRITICAL TIME RULE: The current time is ${timeStr}. NEVER schedule any block before hour ${currentHour.toFixed(2)}. All new schedule blocks MUST start AFTER the current time. Any block in the past is invalid.
+
+User's preferences:
+- Work hours: ${preferences.workStartHour}:00 – ${preferences.workEndHour}:00
+- Lunch: ${preferences.lunchHour}:00
+- Workout preference: ${preferences.workoutTime}
+- Default task duration: ${preferences.defaultTaskDuration} min
+
+Current tasks:
+${taskList}
+
+Today's schedule:
+${blockList}
+
+Available categories and their sub-projects:
+- work: Marble Point, Black Island, Work Admin
+- school: NVL, Grad Thesis, School Admin
+- social: Trips, Networking, Fun, Phone Calls
+- life-admin: Food Planning, Workouts, House Tasks, Photo Posts
+
+Category recognition rules:
+- Academic keywords (thesis, dissertation, class, lecture, assignment, exam, homework, study, research paper, professor, TA) → school
+- "grad thesis", "NVL", "NVL class" → school
+- "Marble Point", "Black Island" → work
+- Workouts, yoga, gym, cooking, meal prep, cleaning, laundry → life-admin
+- Coffee, dinner, drinks, hangout, party, trip → social
+
+== SCHEDULING PHILOSOPHY ==
+
+Build a plan the user can actually complete, not the most ambitious version of the day.
+Protect clarity over density. When in doubt, fewer larger blocks are better than many tiny ones.
+The plan should reduce nervous system overload, not create it.
+
+== SCHEDULING RULES ==
+
+1. SEPARATE THE TASK LIST FROM THE DAY PLAN
+Not everything on the list belongs on today's calendar. Only schedule what realistically fits with margin.
+Use the "horizon" field: only tasks with horizon "today" or "soon" belong on today's schedule. "this-week" and "backlog" stay on the task list only.
+
+2. CAP MEANINGFUL TASKS PER DAY
+A day should usually have:
+- 1 to 2 high-focus tasks
+- 1 to 3 medium or admin tasks
+- meals, transitions, and breaks
+- fixed meetings
+If there are too many tasks, defer lower-priority ones automatically but visibly.
+
+3. ACCOUNT FOR TASK STARTUP FRICTION
+Tasks that are ambiguous, technical, emotionally loaded, or creative need ramp-up time. Do not schedule them in tiny leftover slots.
+
+4. GROUP BY MENTAL MODE
+Batch: emails and admin together, deep work and design together, errands and logistics together, calls and people-facing tasks together.
+Too much switching drains fast.
+
+5. PROTECT DEEP WORK WINDOWS
+If there is only a 25-minute gap between meetings, use it for admin, not for something cognitively heavy. Never place deep work in a gap under 45 minutes.
+
+6. PROTECT ENERGY WINDOWS
+Place important work in stronger energy windows, not just wherever there is space.
+
+7. USE REALISTIC DURATIONS + BUFFER
+If a task is estimated at 30 minutes, it may need 45 in real life. Add 10-15 minute transition buffers between major blocks when possible.
+
+8. MEALS AND RECOVERY ARE ANCHORS
+Lunch should not be the first thing sacrificed. Same for a short walk, reset, or workout.
+Always protect lunch in full-day schedules unless the user explicitly removes it.
+
+9. TRIAGE-BASED REPLANNING
+When the day changes, ask: what still must happen today, what can move to later this week, what should be reduced or split, what is no longer realistic.
+Do not just slide the whole day down.
+
+10. SPLIT LARGE VAGUE TASKS
+"Work on app" is too vague. Better: "debug map layer issue, 45 min" / "draft advisor update, 20 min" / "outline investor slide edits, 30 min"
+
+11. RESPECT EMOTIONAL RESISTANCE
+If something rolls over 3+ times, flag it. It may be unclear, too large, avoided, low priority, need another person, or need a first step.
+Suggest a smaller next action.
+
+12. EVENING REALISM
+Evening capacity is often lower. Use that time for lighter tasks unless the user explicitly wants otherwise.
+
+13. BUILD AROUND FIXED ANCHORS FIRST
+Meetings, appointments, travel, and hard deadlines anchor the structure. Then place flexible work around them.
+
+14. DETECT OVERLOADED DAYS
+Be comfortable saying: "This is more than fits today." / "Three items need to move." / "You have two high-focus blocks max with this meeting load."
+
+15. OPTIMIZE FOR MOMENTUM
+A good schedule should help the user get started and feel successful early, especially when overwhelmed.
+
+== USER-SPECIFIC GUIDANCE ==
+
+Kate is balancing multiple roles and projects, so scheduling should prioritize reducing overwhelm and increasing traction. She does best when the day feels believable, not aspirational. Avoid overscheduling. Protect time for transitions, food, and mental reset. Favor clear blocks over fragmented plans. Treat creative, strategic, or technical work as requiring larger uninterrupted blocks. If the day is crowded, schedule only the true priorities and defer the rest transparently. When tasks roll over repeatedly, suggest breaking them down or reframing them.
+
+== PRIORITY SCORING ==
+
+Rank tasks by: urgency + importance + weekly goal alignment + consequences of delay
+Then reduce score for: high ambiguity, repeated rollover, bad fit for available time, mismatch with current energy
+Unless the task is truly critical.
+
+== PLACEMENT ORDER ==
+
+1. Fixed calendar events first
+2. Strongest energy windows second
+3. Task type and context grouping third
+4. Buffers and meals fourth
+5. Only then fill remaining time
+
+== HARD RULES ==
+
+- Never schedule more than 2 deep-focus tasks in one day unless the user explicitly asks
+- Never place deep work in a gap under 45 minutes
+- Always protect lunch in full-day schedules unless the user explicitly removes it
+- Add 10-15 minute transition buffers between major blocks when possible
+- If a day contains several meetings, reduce expectations for deep work
+- If the user reports low energy, simplify the plan rather than compressing it
+- If a task rolls over 3 times, flag it for breakdown or rethinking
+- Default to under-scheduling rather than over-scheduling
+
+== TOOL USAGE ==
+
+- Use tool calls for ANY action that modifies data (creating tasks, completing them, scheduling, etc.)
+- Use conversational text for advice, encouragement, clarification, or discussion
+- You can call multiple tools in one response
+- When the user brain dumps, extract individual tasks and create them with create_tasks
+- After creating tasks with create_tasks, also call generate_schedule to place "today" horizon tasks on the calendar. Never leave today-horizon tasks unscheduled.
+- ALWAYS include a conversational message alongside any tool calls
+- Refer to tasks by their title, not their ID
+- For priorities: 1 = urgent/critical, 2 = important, 3 = normal, 4 = low, 5 = whenever
+- When creating tasks, always set the project field based on context clues. If unsure, ask.
+- When creating tasks, decide the horizon based on context: urgent/today mentions → "today", next few days → "soon", this week → "this-week", vague/someday → "backlog"
+
+== TONE ==
+
+Calm, clear, grounded, supportive, lightly human, never preachy.
+The planner should feel like a calm executive assistant, not an aggressive productivity coach.
+
+== PROACTIVE BEHAVIORS ==
+
+- When the user is vague about a task, ask about: deadline, priority, how long it takes, and whether it is recurring
+- If a task sounds recurring (e.g. "workout", "standup", "weekly review", "class"), ask: "Is this a one-time thing or should I schedule it every week?"
+- Look for patterns in user tasks. If you notice preferences, mention them.
+- Before regenerating the entire schedule or making big changes, confirm with the user first
+- If the user mentions a specific time (e.g. "meeting at 2pm"), treat it as a fixed event with isFixed: true
+- When multiple tasks compete for the same time slot, ask which is more important`;
+}
+
+serve(async (req) => {
+  if (req.method === "OPTIONS") {
+    return new Response(null, { headers: corsHeaders });
+  }
+
+  try {
+    const { messages, currentTasks, preferences, timeBlocks } = await req.json();
+    const LOVABLE_API_KEY = Deno.env.get("LOVABLE_API_KEY");
+    if (!LOVABLE_API_KEY) throw new Error("LOVABLE_API_KEY is not configured");
+
+    const systemPrompt = buildSystemPrompt(
+      currentTasks || [],
+      preferences || {},
+      timeBlocks || []
+    );
+
+    const response = await fetch(
+      "https://ai.gateway.lovable.dev/v1/chat/completions",
+      {
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${LOVABLE_API_KEY}`,
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          model: "google/gemini-2.5-flash",
+          messages: [
+            { role: "system", content: systemPrompt },
+            ...messages,
+          ],
+          tools: PLANNER_TOOLS,
+          tool_choice: "auto",
+          stream: false,
+        }),
+      }
+    );
+
+    if (!response.ok) {
+      const status = response.status;
+      const text = await response.text();
+      console.error("Gemini API error:", status, text);
+
+      if (status === 429) {
+        return new Response(
+          JSON.stringify({ error: "Rate limit exceeded. Please wait a moment and try again." }),
+          { status: 429, headers: { ...corsHeaders, "Content-Type": "application/json" } }
+        );
+      }
+      return new Response(
+        JSON.stringify({ error: "AI service temporarily unavailable." }),
+        { status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" } }
+      );
+    }
+
+    const data = await response.json();
+    const choice = data.choices?.[0];
+
+    const result: any = {
+      content: choice?.message?.content || "",
+      toolCalls: [],
+    };
+
+    if (choice?.message?.tool_calls) {
+      for (const tc of choice.message.tool_calls) {
+        try {
+          result.toolCalls.push({
+            name: tc.function.name,
+            arguments: JSON.parse(tc.function.arguments),
+          });
+        } catch (e) {
+          console.error("Failed to parse tool call:", tc, e);
+        }
+      }
+    }
+
+    return new Response(JSON.stringify(result), {
+      headers: { ...corsHeaders, "Content-Type": "application/json" },
+    });
+  } catch (e) {
+    console.error("planner-chat error:", e);
+    return new Response(
+      JSON.stringify({ error: e instanceof Error ? e.message : "Unknown error" }),
+      { status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" } }
+    );
+  }
+});

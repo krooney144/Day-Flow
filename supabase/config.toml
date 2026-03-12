@@ -1,0 +1,4 @@
+project_id = "vbkonszihazpjavigitu"
+
+[functions.planner-chat]
+verify_jwt = false

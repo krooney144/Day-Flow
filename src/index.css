@@ -1,0 +1,89 @@
+@import url('https://fonts.googleapis.com/css2?family=Figtree:wght@300;400;500;600;700&display=swap');
+
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  :root {
+    --background: 240 10% 98%;
+    --foreground: 224 25% 25%;
+
+    --card: 0 0% 100%;
+    --card-foreground: 224 25% 25%;
+
+    --popover: 0 0% 100%;
+    --popover-foreground: 224 25% 25%;
+
+    --primary: 340 60% 65%;
+    --primary-foreground: 0 0% 100%;
+
+    --secondary: 220 20% 93%;
+    --secondary-foreground: 224 25% 45%;
+
+    --muted: 220 20% 96%;
+    --muted-foreground: 224 20% 65%;
+
+    --accent: 180 40% 50%;
+    --accent-foreground: 0 0% 100%;
+
+    --destructive: 0 60% 55%;
+    --destructive-foreground: 0 0% 100%;
+
+    --border: 220 20% 90%;
+    --input: 220 20% 93%;
+    --ring: 340 60% 75%;
+
+    --radius: 0.75rem;
+
+    --cat-blue: 210 50% 70%;
+    --cat-grape: 270 30% 75%;
+    --cat-teal: 180 30% 70%;
+    --cat-green: 140 25% 75%;
+    --cat-mauve: 310 30% 80%;
+    --cat-rose: 340 50% 75%;
+    --cat-navy: 220 40% 55%;
+
+    --shadow-surface: 0 0 0 1px hsl(220 20% 90% / 0.8), 0 2px 4px -1px hsl(220 20% 80% / 0.5);
+    --shadow-surface-hover: 0 0 0 1px hsl(220 20% 85% / 0.9), 0 4px 8px -2px hsl(220 20% 80% / 0.6);
+    --shadow-elevated: 0 0 0 1px hsl(220 20% 88% / 0.6), 0 8px 24px -4px hsl(220 20% 70% / 0.3);
+
+    --ease-out-expo: cubic-bezier(0.32, 0.72, 0, 1);
+  }
+
+  * {
+    @apply border-border;
+  }
+
+  body {
+    @apply bg-background text-foreground antialiased;
+    font-family: 'Figtree', sans-serif;
+  }
+}
+
+@layer utilities {
+  .surface-card {
+    box-shadow: var(--shadow-surface);
+    @apply bg-card rounded-xl;
+  }
+  .surface-card-hover {
+    box-shadow: var(--shadow-surface-hover);
+  }
+  .surface-elevated {
+    box-shadow: var(--shadow-elevated);
+    @apply bg-card rounded-xl;
+  }
+  .text-display {
+    @apply font-semibold tracking-tight;
+    line-height: 1.1;
+  }
+  .text-meta {
+    @apply font-normal tracking-wide tabular-nums;
+  }
+  .cat-dot {
+    @apply w-1.5 h-1.5 rounded-full flex-shrink-0;
+  }
+  .tap-target {
+    @apply min-h-[44px] min-w-[44px];
+  }
+}
