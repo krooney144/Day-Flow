@@ -6,7 +6,7 @@ AI-powered daily planner — realistic scheduling, not maximum productivity.
 
 - Vite + React + TypeScript
 - shadcn/ui + Tailwind CSS
-- Supabase Edge Functions (OpenAI gpt-4o)
+- Vercel Serverless Functions (OpenAI gpt-4o)
 - Framer Motion
 
 ## Getting Started
@@ -16,12 +16,9 @@ npm install
 npm run dev
 ```
 
-## Environment Variables
+## Deploying to Vercel
 
-### Supabase Edge Function
-
-Set `OPENAI_API_KEY` as a Supabase secret:
-
-```sh
-supabase secrets set OPENAI_API_KEY=sk-...
-```
+1. Push this repo to GitHub
+2. Go to [vercel.com](https://vercel.com), import the repo
+3. Add one environment variable: `OPENAI_API_KEY` = your OpenAI key
+4. Deploy — that's it

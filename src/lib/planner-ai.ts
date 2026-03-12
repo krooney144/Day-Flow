@@ -1,7 +1,7 @@
 import { Task, TimeBlock, UserPreferences, ChatMessage } from "@/types/dayflow";
 import { findNextAvailableSlot } from "@/lib/scheduling-utils";
 
-const CHAT_URL = `${import.meta.env.VITE_SUPABASE_URL}/functions/v1/planner-chat`;
+const CHAT_URL = "/api/planner-chat";
 
 interface PlannerContext {
   messages: { role: "user" | "assistant"; content: string }[];
@@ -25,7 +25,6 @@ export async function callPlannerAI(context: PlannerContext): Promise<PlannerRes
     method: "POST",
     headers: {
       "Content-Type": "application/json",
-      Authorization: `Bearer ${import.meta.env.VITE_SUPABASE_PUBLISHABLE_KEY}`,
     },
     body: JSON.stringify(context),
   });
