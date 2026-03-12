@@ -53,3 +53,62 @@ export function findNextAvailableSlot(
   // Fallback: schedule at next available hour from now
   return currentHour !== undefined ? Math.ceil(currentHour * 4) / 4 : 8;
 }
+
+/**
+ * Resolve overlaps after a block is placed at a specific time.
+ * Displaced blocks get shifted forward to the next available slot.
+ * Fixed blocks are never moved. Returns the full updated block list.
+ */
+export function resolveOverlaps(
+  allBlocks: TimeBlock[],
+  movedBlockId: string
+): TimeBlock[] {
+  const blocks = allBlocks.map((b) => ({ ...b }));
+  const moved = blocks.find((b) => b.id === movedBlockId);
+  if (!moved) return blocks;
+
+  const date = moved.date;
+  const dayBlocks = blocks.filter((b) => b.date === date && b.id !== movedBlockId);
+  const otherDateBlocks = blocks.filter((b) => b.date !== date);
+
+  // Sort day blocks: the moved block takes priority, then fixed blocks, then by start time
+  const sorted = [moved, ...dayBlocks.sort((a, b) => {
+    if (a.isFixed && !b.isFixed) return -1;
+    if (!a.isFixed && b.isFixed) return 1;
+    return a.startHour - b.startHour;
+  })];
+
+  // Build occupied ranges from placed blocks
+  const placed: TimeBlock[] = [moved];
+
+  for (const block of sorted) {
+    if (block.id === movedBlockId) continue;
+    if (block.isFixed) {
+      placed.push(block);
+      continue;
+    }
+
+    // Check if current position conflicts with any placed block
+    const hasConflict = placed.some(
+      (p) =>
+        p.date === block.date &&
+        block.startHour < p.startHour + p.durationHours &&
+        block.startHour + block.durationHours > p.startHour
+    );
+
+    if (hasConflict) {
+      // Find next available slot after the block's current time
+      const startHour = findNextAvailableSlot(
+        placed,
+        block.durationHours,
+        "any",
+        date,
+        block.startHour
+      );
+      block.startHour = startHour;
+    }
+    placed.push(block);
+  }
+
+  return [...otherDateBlocks, ...placed];
+}

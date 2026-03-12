@@ -8,6 +8,7 @@ import {
   DEFAULT_CATEGORIES,
   Category,
 } from "@/types/dayflow";
+import { resolveOverlaps } from "@/lib/scheduling-utils";
 import {
   loadFromCloud,
   saveToCloud,
@@ -326,12 +327,24 @@ export function useDayFlowStore() {
   }, [setState]);
 
   const deferTask = useCallback((id: string) => {
-    setState((s) => ({
-      ...s,
-      tasks: s.tasks.map((t) =>
-        t.id === id ? { ...t, rolloverCount: t.rolloverCount + 1 } : t
-      ),
-    }));
+    setState((s) => {
+      const tomorrow = new Date();
+      tomorrow.setDate(tomorrow.getDate() + 1);
+      const tomorrowStr = tomorrow.toISOString().split("T")[0];
+
+      // Move any linked time block to tomorrow
+      const timeBlocks = s.timeBlocks.map((b) =>
+        b.taskId === id ? { ...b, date: tomorrowStr } : b
+      );
+
+      return {
+        ...s,
+        tasks: s.tasks.map((t) =>
+          t.id === id ? { ...t, rolloverCount: t.rolloverCount + 1 } : t
+        ),
+        timeBlocks,
+      };
+    });
   }, [setState]);
 
   const deleteTask = useCallback((id: string) => {
@@ -392,6 +405,24 @@ export function useDayFlowStore() {
     }));
   }, [setState]);
 
+  const moveBlockToDate = useCallback((blockId: string, newDate: string) => {
+    setState((s) => {
+      const updated = s.timeBlocks.map((b) =>
+        b.id === blockId ? { ...b, date: newDate } : b
+      );
+      // Resolve any overlaps on the target date
+      const resolved = resolveOverlaps(updated, blockId);
+      return { ...s, timeBlocks: resolved };
+    });
+  }, [setState]);
+
+  const displaceBlock = useCallback((blockId: string) => {
+    setState((s) => {
+      const resolved = resolveOverlaps(s.timeBlocks, blockId);
+      return { ...s, timeBlocks: resolved };
+    });
+  }, [setState]);
+
   const reorderTasks = useCallback((orderedIds: string[]) => {
     setState((s) => {
       const taskMap = new Map(s.tasks.map((t) => [t.id, t]));
@@ -449,6 +480,8 @@ export function useDayFlowStore() {
     addTimeBlock,
     addTimeBlocks,
     updateTimeBlock,
+    moveBlockToDate,
+    displaceBlock,
     reorderTasks,
     addProject,
     clearAllData,

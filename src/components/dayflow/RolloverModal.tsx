@@ -4,11 +4,17 @@ import { CATEGORY_COLOR_MAP } from "@/types/dayflow";
 import { Check, ArrowRight, X } from "lucide-react";
 
 export default function RolloverModal() {
-  const { getRolloverTasks, getCategory, updateTask, setHasSeenRollover, hasSeenRollover, lastOpenDate } = useDayFlow();
+  const { getRolloverTasks, getCategory, updateTask, deferTask, setHasSeenRollover, hasSeenRollover, lastOpenDate, timeBlocks, moveBlockToDate } = useDayFlow();
   const today = new Date().toISOString().split("T")[0];
   const tasks = getRolloverTasks();
 
-  const show = !hasSeenRollover && lastOpenDate !== today && tasks.length > 0;
+  // Also find tasks with blocks on past dates that are still active
+  const pastBlockTasks = timeBlocks
+    .filter((b) => b.date < today && b.taskId)
+    .map((b) => b.taskId!);
+  const allRolloverIds = new Set([...tasks.map((t) => t.id), ...pastBlockTasks]);
+
+  const show = !hasSeenRollover && lastOpenDate !== today && allRolloverIds.size > 0;
 
   if (!show) return null;
 
@@ -18,10 +24,22 @@ export default function RolloverModal() {
         updateTask(taskId, { status: "completed" });
         break;
       case "keep":
+        // Move linked blocks to today, reset rollover count
         updateTask(taskId, { rolloverCount: 0 });
+        for (const b of timeBlocks) {
+          if (b.taskId === taskId && b.date < today) {
+            moveBlockToDate(b.id, today);
+          }
+        }
         break;
       case "defer":
-        // Keep active, increase rollover
+        // Increment rollover and move block to today
+        deferTask(taskId);
+        for (const b of timeBlocks) {
+          if (b.taskId === taskId && b.date < today) {
+            moveBlockToDate(b.id, today);
+          }
+        }
         break;
       case "drop":
         updateTask(taskId, { status: "dropped" });
