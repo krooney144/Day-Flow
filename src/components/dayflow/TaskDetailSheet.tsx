@@ -2,6 +2,7 @@ import { useState, useEffect } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import { useDayFlow } from "@/context/DayFlowContext";
 import { Task, CATEGORY_COLOR_MAP, EnergyLevel, TimeOfDay, DEFAULT_PROJECTS } from "@/types/dayflow";
+import { mergeProjects } from "@/lib/project-utils";
 import { X, Calendar, Clock, Tag, FileText, Zap, MapPin, Repeat, Timer, FolderOpen } from "lucide-react";
 import { format } from "date-fns";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
@@ -19,7 +20,7 @@ const TIME_OPTIONS: TimeOfDay[] = ["morning", "afternoon", "evening", "any"];
 const ENERGY_OPTIONS: EnergyLevel[] = ["low", "medium", "high"];
 
 export default function TaskDetailSheet({ task, onClose }: Props) {
-  const { getCategory, updateTask, dropTask, timeBlocks, preferences } = useDayFlow();
+  const { getCategory, updateTask, dropTask, timeBlocks, preferences, customProjects } = useDayFlow();
 
   const [estimatedMinutes, setEstimatedMinutes] = useState(30);
   const [title, setTitle] = useState("");
@@ -54,7 +55,8 @@ export default function TaskDetailSheet({ task, onClose }: Props) {
   const scheduledBlock = timeBlocks.find((b) => b.taskId === task.id);
 
   // Projects for selected category
-  const availableProjects = DEFAULT_PROJECTS[categoryId] || [];
+  const allProjects = mergeProjects(customProjects);
+  const availableProjects = allProjects[categoryId] || [];
 
   const handleSave = () => {
     updateTask(task.id, {
