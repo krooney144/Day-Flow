@@ -9,7 +9,7 @@ import { toast } from "sonner";
 
 export default function ChatPage() {
   const store = useDayFlow();
-  const { chatMessages, addChatMessage, tasks, preferences, timeBlocks } = store;
+  const { chatMessages, addChatMessage, tasks, preferences, timeBlocks, customProjects } = store;
   const [input, setInput] = useState("");
   const [isTyping, setIsTyping] = useState(false);
   const scrollRef = useRef<HTMLDivElement>(null);
@@ -48,6 +48,7 @@ export default function ChatPage() {
         currentTasks: tasks,
         preferences,
         timeBlocks,
+        customProjects,
       });
 
       // Execute any tool calls

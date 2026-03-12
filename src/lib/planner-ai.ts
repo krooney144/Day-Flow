@@ -8,6 +8,7 @@ interface PlannerContext {
   currentTasks: Task[];
   preferences: UserPreferences;
   timeBlocks: TimeBlock[];
+  customProjects?: Record<string, string[]>;
 }
 
 export interface ToolCall {
@@ -51,6 +52,7 @@ export function executeToolCalls(
     addTimeBlock: (block: TimeBlock) => void;
     addTimeBlocks: (blocks: TimeBlock[]) => void;
     updatePreferences: (prefs: Partial<UserPreferences>) => void;
+    addProject: (categoryId: string, projectName: string) => void;
   },
   existingTimeBlocks: TimeBlock[] = []
 ): string[] {
@@ -136,6 +138,11 @@ export function executeToolCalls(
       case "update_preferences": {
         store.updatePreferences(tc.arguments);
         summaries.push("Updated preferences");
+        break;
+      }
+      case "create_project": {
+        store.addProject(tc.arguments.categoryId, tc.arguments.projectName);
+        summaries.push(`Created project "${tc.arguments.projectName}"`);
         break;
       }
       case "add_buffer_block": {

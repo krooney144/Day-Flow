@@ -20,7 +20,7 @@ const PLANNER_TOOLS = [
                 },
                 project: {
                   type: "string",
-                  description: "Sub-project within the category. Work: Marble Point, Black Island, Work Admin. School: NVL, Grad Thesis, School Admin. Social: Trips, Networking, Fun, Phone Calls. Life Admin: Food Planning, Workouts, House Tasks, Photo Posts.",
+                  description: "Sub-project within the category. Use existing projects from context, or if the user mentions a new project name, first call create_project to add it, then use it here.",
                 },
                 priority: {
                   type: "number",
@@ -200,6 +200,29 @@ const PLANNER_TOOLS = [
   {
     type: "function",
     function: {
+      name: "create_project",
+      description:
+        "Create a new project within a category. Use when the user mentions a new project name that doesn't exist in the current projects list, or references a project multiple times.",
+      parameters: {
+        type: "object",
+        properties: {
+          categoryId: {
+            type: "string",
+            enum: ["work", "school", "social", "life-admin"],
+          },
+          projectName: {
+            type: "string",
+            description: "The name of the new project",
+          },
+        },
+        required: ["categoryId", "projectName"],
+        additionalProperties: false,
+      },
+    },
+  },
+  {
+    type: "function",
+    function: {
       name: "add_buffer_block",
       description: "Add a break, travel, or transition block to the schedule.",
       parameters: {
@@ -218,7 +241,27 @@ const PLANNER_TOOLS = [
   },
 ];
 
-function buildSystemPrompt(currentTasks, preferences, timeBlocks) {
+const DEFAULT_PROJECTS = {
+  work: ["Marble Point", "Black Island", "Work Admin"],
+  school: ["NVL", "Grad Thesis", "School Admin"],
+  social: ["Trips", "Networking", "Fun", "Phone Calls"],
+  "life-admin": ["Food Planning", "Workouts", "House Tasks", "Photo Posts"],
+};
+
+function buildProjectList(customProjects) {
+  const custom = customProjects || {};
+  const allKeys = new Set([...Object.keys(DEFAULT_PROJECTS), ...Object.keys(custom)]);
+  const lines = [];
+  for (const key of allKeys) {
+    const defaults = DEFAULT_PROJECTS[key] || [];
+    const extras = (custom[key] || []).filter((p) => !defaults.includes(p));
+    const all = [...defaults, ...extras];
+    lines.push(`- ${key}: ${all.join(", ")}`);
+  }
+  return lines.join("\n");
+}
+
+function buildSystemPrompt(currentTasks, preferences, timeBlocks, customProjects) {
   const now = new Date();
   const dayNames = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"];
   const today = now.toISOString().split("T")[0];
@@ -267,10 +310,9 @@ Today's schedule:
 ${blockList}
 
 Available categories and their sub-projects:
-- work: Marble Point, Black Island, Work Admin
-- school: NVL, Grad Thesis, School Admin
-- social: Trips, Networking, Fun, Phone Calls
-- life-admin: Food Planning, Workouts, House Tasks, Photo Posts
+${buildProjectList(customProjects)}
+
+You can create new projects using the create_project tool when users reference project names not in the list above. If a user mentions a new project name multiple times, create it so it persists.
 
 Category recognition rules:
 - Academic keywords (thesis, dissertation, class, lecture, assignment, exam, homework, study, research paper, professor, TA) → school
@@ -417,7 +459,7 @@ export default async function handler(req, res) {
   }
 
   try {
-    const { messages, currentTasks, preferences, timeBlocks } = req.body;
+    const { messages, currentTasks, preferences, timeBlocks, customProjects } = req.body;
     const OPENAI_API_KEY = process.env.OPENAI_API_KEY;
     if (!OPENAI_API_KEY) {
       return res.status(500).json({ error: "OPENAI_API_KEY is not configured" });
@@ -426,7 +468,8 @@ export default async function handler(req, res) {
     const systemPrompt = buildSystemPrompt(
       currentTasks || [],
       preferences || {},
-      timeBlocks || []
+      timeBlocks || [],
+      customProjects || {}
     );
 
     const response = await fetch("https://api.openai.com/v1/chat/completions", {

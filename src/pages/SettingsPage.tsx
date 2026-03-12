@@ -1,16 +1,23 @@
 import { useState } from "react";
-import { motion } from "framer-motion";
+import { motion, AnimatePresence } from "framer-motion";
 import { useDayFlow } from "@/context/DayFlowContext";
 import { ChevronRight } from "lucide-react";
 
 export default function SettingsPage() {
-  const { preferences, updatePreferences } = useDayFlow();
+  const { preferences, updatePreferences, clearAllData } = useDayFlow();
   const [workStart, setWorkStart] = useState(preferences.workStartHour);
   const [workEnd, setWorkEnd] = useState(preferences.workEndHour);
   const [lunch, setLunch] = useState(preferences.lunchHour);
+  const [showConfirm, setShowConfirm] = useState(false);
 
   const save = () => {
     updatePreferences({ workStartHour: workStart, workEndHour: workEnd, lunchHour: lunch });
+  };
+
+  const handleClearData = async () => {
+    await clearAllData();
+    setShowConfirm(false);
+    window.location.reload();
   };
 
   return (
@@ -47,9 +54,57 @@ export default function SettingsPage() {
         <Section title="Account">
           <SettingRow label="Change passcode" value="" />
           <SettingRow label="Export data" value="" />
-          <SettingRow label="Clear all data" value="" destructive />
+          <button
+            onClick={() => setShowConfirm(true)}
+            className="flex items-center justify-between px-3 py-3 tap-target cursor-pointer active:bg-muted rounded-xl transition-colors w-full text-left"
+          >
+            <span className="text-sm text-destructive">Clear all data</span>
+            <ChevronRight className="h-4 w-4 text-muted-foreground" />
+          </button>
         </Section>
       </div>
+
+      {/* Confirmation dialog */}
+      <AnimatePresence>
+        {showConfirm && (
+          <>
+            <motion.div
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              exit={{ opacity: 0 }}
+              onClick={() => setShowConfirm(false)}
+              className="fixed inset-0 z-40 bg-foreground/10 backdrop-blur-[2px]"
+            />
+            <motion.div
+              initial={{ opacity: 0, scale: 0.95 }}
+              animate={{ opacity: 1, scale: 1 }}
+              exit={{ opacity: 0, scale: 0.95 }}
+              transition={{ duration: 0.2 }}
+              className="fixed inset-x-4 top-1/2 -translate-y-1/2 z-50 rounded-2xl bg-card p-6"
+              style={{ boxShadow: "0 8px 32px hsl(220 20% 30% / 0.2)" }}
+            >
+              <h3 className="text-display text-lg text-foreground mb-2">Clear all data?</h3>
+              <p className="text-sm text-muted-foreground mb-6 leading-relaxed">
+                This will permanently delete all tasks, schedules, chat history, and custom projects. This cannot be undone.
+              </p>
+              <div className="flex gap-2">
+                <button
+                  onClick={() => setShowConfirm(false)}
+                  className="flex-1 rounded-xl bg-secondary py-2.5 text-sm font-medium text-foreground active:bg-muted transition-colors"
+                >
+                  Cancel
+                </button>
+                <button
+                  onClick={handleClearData}
+                  className="flex-1 rounded-xl bg-destructive py-2.5 text-sm font-medium text-destructive-foreground active:opacity-90 transition-opacity"
+                >
+                  Clear everything
+                </button>
+              </div>
+            </motion.div>
+          </>
+        )}
+      </AnimatePresence>
     </div>
   );
 }

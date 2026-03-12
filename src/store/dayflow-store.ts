@@ -1,5 +1,5 @@
-// DayFlow store — localStorage-backed state management
-import { useState, useCallback } from "react";
+// DayFlow store — localStorage + cloud-backed state management
+import { useState, useCallback, useEffect, useRef } from "react";
 import {
   Task,
   TimeBlock,
@@ -8,8 +8,9 @@ import {
   DEFAULT_CATEGORIES,
   Category,
 } from "@/types/dayflow";
+import { loadFromCloud, saveToCloud, clearCloud } from "@/lib/cloud-sync";
 
-// Simple global state with localStorage persistence
+// Simple global state with localStorage persistence + cloud sync
 const STORAGE_KEY = "dayflow-state";
 
 interface DayFlowState {
@@ -20,6 +21,8 @@ interface DayFlowState {
   preferences: UserPreferences;
   hasSeenRollover: boolean;
   lastOpenDate: string;
+  customProjects: Record<string, string[]>;
+  lastModified: number;
 }
 
 const defaultPreferences: UserPreferences = {
@@ -53,6 +56,8 @@ function getDefaultState(): DayFlowState {
     preferences: defaultPreferences,
     hasSeenRollover: false,
     lastOpenDate: "",
+    customProjects: {},
+    lastModified: 0,
   };
 }
 
@@ -109,11 +114,29 @@ function generateSampleBlocks(): TimeBlock[] {
 
 export function useDayFlowStore() {
   const [state, setStateRaw] = useState<DayFlowState>(loadState);
+  const cloudSaveTimer = useRef<ReturnType<typeof setTimeout>>();
+
+  // Load from cloud on mount — cloud wins if newer
+  useEffect(() => {
+    loadFromCloud<DayFlowState>().then((cloudState) => {
+      if (cloudState && (cloudState.lastModified || 0) > (state.lastModified || 0)) {
+        const merged = { ...getDefaultState(), ...cloudState };
+        setStateRaw(merged);
+        saveState(merged);
+      }
+    });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   const setState = useCallback((updater: (prev: DayFlowState) => DayFlowState) => {
     setStateRaw((prev) => {
-      const next = updater(prev);
+      const next = { ...updater(prev), lastModified: Date.now() };
       saveState(next);
+      // Debounced cloud save (1 second)
+      if (cloudSaveTimer.current) clearTimeout(cloudSaveTimer.current);
+      cloudSaveTimer.current = setTimeout(() => {
+        saveToCloud(next);
+      }, 1000);
       return next;
     });
   }, []);
@@ -234,6 +257,27 @@ export function useDayFlowStore() {
     });
   }, [setState]);
 
+  const addProject = useCallback((categoryId: string, projectName: string) => {
+    setState((s) => {
+      const existing = s.customProjects[categoryId] || [];
+      if (existing.includes(projectName)) return s;
+      return {
+        ...s,
+        customProjects: {
+          ...s.customProjects,
+          [categoryId]: [...existing, projectName],
+        },
+      };
+    });
+  }, [setState]);
+
+  const clearAllData = useCallback(async () => {
+    const fresh = getDefaultState();
+    setStateRaw(fresh);
+    saveState(fresh);
+    await clearCloud();
+  }, []);
+
   return {
     ...state,
     authenticate,
@@ -255,6 +299,8 @@ export function useDayFlowStore() {
     addTimeBlocks,
     updateTimeBlock,
     reorderTasks,
+    addProject,
+    clearAllData,
     setState,
   };
 }
