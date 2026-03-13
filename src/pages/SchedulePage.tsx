@@ -277,19 +277,27 @@ function DayView({ dateStr, onEditTask, onSwipePrev, onSwipeNext }: {
     }
   }, [onSwipePrev, onSwipeNext]);
 
+  const DRAG_THRESHOLD = 8; // px — must move this far before drag starts
+
   const handlePointerDown = useCallback((blockId: string, e: React.PointerEvent) => {
     if (blocks.find(b => b.id === blockId)?.isFixed) return;
     e.preventDefault();
-    setDraggingId(blockId);
-    const hour = getHourFromPointer(e.clientY);
-    setDragPreviewHour(hour);
+    const startY = e.clientY;
+    let dragStarted = false;
 
     const onMove = (ev: PointerEvent) => {
-      const h = getHourFromPointer(ev.clientY);
-      const block = blocks.find(b => b.id === blockId);
-      if (block) {
-        const clamped = Math.max(START_HOUR, Math.min(END_HOUR - block.durationHours, h));
-        setDragPreviewHour(clamped);
+      if (!dragStarted && Math.abs(ev.clientY - startY) >= DRAG_THRESHOLD) {
+        dragStarted = true;
+        setDraggingId(blockId);
+        setDragPreviewHour(getHourFromPointer(startY));
+      }
+      if (dragStarted) {
+        const h = getHourFromPointer(ev.clientY);
+        const block = blocks.find(b => b.id === blockId);
+        if (block) {
+          const clamped = Math.max(START_HOUR, Math.min(END_HOUR - block.durationHours, h));
+          setDragPreviewHour(clamped);
+        }
       }
     };
 
@@ -300,12 +308,14 @@ function DayView({ dateStr, onEditTask, onSwipePrev, onSwipeNext }: {
     };
 
     const onUp = (ev: PointerEvent) => {
-      const h = getHourFromPointer(ev.clientY);
-      const block = blocks.find(b => b.id === blockId);
-      if (block) {
-        const clamped = Math.max(START_HOUR, Math.min(END_HOUR - block.durationHours, h));
-        updateTimeBlock(blockId, { startHour: clamped });
-        displaceBlock(blockId);
+      if (dragStarted) {
+        const h = getHourFromPointer(ev.clientY);
+        const block = blocks.find(b => b.id === blockId);
+        if (block) {
+          const clamped = Math.max(START_HOUR, Math.min(END_HOUR - block.durationHours, h));
+          updateTimeBlock(blockId, { startHour: clamped });
+          displaceBlock(blockId);
+        }
       }
       setDraggingId(null);
       setDragPreviewHour(null);
@@ -488,7 +498,7 @@ function ScheduleBlock({
           <button
             aria-label={completed ? `Mark "${block.title}" incomplete` : `Complete "${block.title}"`}
             onPointerDown={(e) => e.stopPropagation()}
-            onClick={(e) => {
+            onPointerUp={(e) => {
               e.stopPropagation();
               onToggle();
             }}
@@ -517,11 +527,11 @@ function ScheduleBlock({
             <button
               aria-label="Edit task"
               onPointerDown={(e) => e.stopPropagation()}
-              onClick={(e) => {
+              onPointerUp={(e) => {
                 e.stopPropagation();
                 onEdit();
               }}
-              className="flex items-center justify-center rounded-lg p-1.5 opacity-50 hover:opacity-100 active:bg-secondary/50 transition-opacity"
+              className="flex items-center justify-center rounded-lg p-2 opacity-60 active:bg-secondary/50 transition-opacity"
             >
               <Pencil className="h-3.5 w-3.5 text-muted-foreground" />
             </button>
@@ -530,13 +540,13 @@ function ScheduleBlock({
             <button
               aria-label="Move to tomorrow"
               onPointerDown={(e) => e.stopPropagation()}
-              onClick={(e) => {
+              onPointerUp={(e) => {
                 e.stopPropagation();
                 onMoveToTomorrow();
               }}
-              className={`flex items-center justify-center rounded-lg opacity-50 hover:opacity-100 active:bg-secondary/50 transition-opacity ${isCompact ? "p-0.5" : "p-1.5"}`}
+              className={`flex items-center justify-center rounded-lg opacity-60 active:bg-secondary/50 transition-opacity ${isCompact ? "p-1 -mr-1" : "p-2 -mr-1"}`}
             >
-              <ArrowRight className={`text-muted-foreground ${isCompact ? "h-3 w-3" : "h-3.5 w-3.5"}`} />
+              <ArrowRight className={`text-muted-foreground ${isCompact ? "h-3.5 w-3.5" : "h-4 w-4"}`} />
             </button>
           )}
         </div>
