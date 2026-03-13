@@ -381,9 +381,12 @@ When the user says "next Monday", "this Friday", "March 20th", etc., calculate t
 
 User's preferences:
 - Work hours: ${workStartHour}:00 – ${workEndHour}:00
-- Lunch: ${preferences.lunchHour}:00
+- Lunch: ${preferences.lunchHour || 12}:00
+- Dinner: ${preferences.dinnerHour || 18.5}
 - Workout preference: ${preferences.workoutTime}
 - Default task duration: ${preferences.defaultTaskDuration} min
+
+NOTE: Meal blocks (lunch & dinner) are automatically generated for today and tomorrow by the app. When generating schedules, work AROUND existing meal blocks — do not remove them. If the user explicitly asks to skip a meal or change a meal time, that's fine.
 
 Current tasks:
 ${taskList}

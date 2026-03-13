@@ -5,6 +5,9 @@ import { CATEGORY_COLOR_MAP, CATEGORY_COLOR_BG_MAP, TimeBlock, Task } from "@/ty
 import { ChevronLeft, ChevronRight, Check, ArrowRight, Pencil } from "lucide-react";
 import { formatHour } from "@/lib/utils";
 import TaskDetailSheet from "@/components/dayflow/TaskDetailSheet";
+import QuickAddTask from "@/components/dayflow/QuickAddTask";
+import ScheduleChatFab from "@/components/dayflow/ScheduleChatFab";
+import { useMealBlocks } from "@/hooks/useMealBlocks";
 
 const HOUR_HEIGHT = 64; // px per hour
 const START_HOUR = 0;
@@ -31,9 +34,11 @@ function useIsDesktop() {
 
 export default function SchedulePage() {
   const { getBlocksForDate, getCategory, preferences, tasks } = useDayFlow();
+  useMealBlocks();
   const [view, setView] = useState<ScheduleView>("day");
   const [dateOffset, setDateOffset] = useState(0);
   const [editingTask, setEditingTask] = useState<Task | null>(null);
+  const [showAdd, setShowAdd] = useState(false);
 
   const currentDate = useMemo(() => {
     const d = new Date();
@@ -135,8 +140,12 @@ export default function SchedulePage() {
         )}
       </div>
 
+      {/* FAB + mini chat */}
+      <ScheduleChatFab onAddTask={() => setShowAdd(true)} />
+
       {/* Task Detail Sheet */}
       <TaskDetailSheet task={editingTask} onClose={() => setEditingTask(null)} />
+      <QuickAddTask open={showAdd} onClose={() => setShowAdd(false)} />
     </div>
   );
 }

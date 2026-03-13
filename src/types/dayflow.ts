@@ -74,6 +74,7 @@ export interface UserPreferences {
   workStartHour: number;
   workEndHour: number;
   lunchHour: number;
+  dinnerHour: number;
   workoutTime: TimeOfDay;
   defaultTaskDuration: number;
   includeBreaks: boolean;

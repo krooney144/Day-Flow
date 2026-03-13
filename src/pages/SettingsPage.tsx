@@ -84,6 +84,13 @@ export default function SettingsPage() {
             min={11}
             max={14}
           />
+          <HourStepper
+            label="Dinner at"
+            value={preferences.dinnerHour ?? 18.5}
+            onChange={(v) => updatePreferences({ dinnerHour: v })}
+            min={17}
+            max={21}
+          />
           <div className="flex items-center justify-between px-3 py-3">
             <span className="text-sm text-foreground">Default task duration</span>
             <div className="flex items-center gap-1.5">
