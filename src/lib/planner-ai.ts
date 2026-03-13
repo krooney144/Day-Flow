@@ -326,26 +326,35 @@ export function executeToolCalls(
         });
 
         // Resolve overlaps: fixed blocks first, then flex blocks
-        const dateBlocks = allBlocks.filter((b) => b.date === targetDate);
-        const fixedOnDate = dateBlocks.filter((b) => b.isFixed);
-        const flexOnDate = dateBlocks.filter((b) => !b.isFixed);
-        for (const block of fixedOnDate) {
-          allBlocks = resolveOverlaps(allBlocks, block.id);
+        const fixedIds = allBlocks
+          .filter((b) => b.date === targetDate && b.isFixed)
+          .map((b) => b.id);
+        const flexIds = allBlocks
+          .filter((b) => b.date === targetDate && !b.isFixed)
+          .map((b) => b.id);
+
+        for (const blockId of fixedIds) {
+          allBlocks = resolveOverlaps(allBlocks, blockId);
         }
-        for (const block of flexOnDate) {
-          const dayBlocks = allBlocks.filter((b) => b.date === targetDate && b.id !== block.id);
+        // Use IDs and look up CURRENT positions from allBlocks each iteration,
+        // so blocks displaced by fixed-block resolution are checked at their
+        // actual positions, not stale pre-resolution positions.
+        for (const blockId of flexIds) {
+          const current = allBlocks.find((b) => b.id === blockId);
+          if (!current) continue;
+          const dayBlocks = allBlocks.filter((b) => b.date === targetDate && b.id !== blockId);
           const hasConflict = dayBlocks.some(
-            (b) => block.startHour < b.startHour + b.durationHours && block.startHour + block.durationHours > b.startHour
+            (b) => current.startHour < b.startHour + b.durationHours && current.startHour + current.durationHours > b.startHour
           );
           if (hasConflict) {
             const newStart = findNextAvailableSlot(
               dayBlocks,
-              block.durationHours,
+              current.durationHours,
               "any",
               targetDate,
-              block.startHour
+              current.startHour
             );
-            const idx = allBlocks.findIndex((b) => b.id === block.id);
+            const idx = allBlocks.findIndex((b) => b.id === blockId);
             if (idx !== -1) {
               allBlocks[idx] = { ...allBlocks[idx], startHour: newStart };
             }
