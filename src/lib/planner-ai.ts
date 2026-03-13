@@ -84,52 +84,45 @@ function getAutoScheduleDateForHorizon(
 }
 
 /**
- * Deduplicate blocks: for each date, keep only one block per task title+date,
- * and for non-task blocks, keep only one per title+date+startHour+type.
- * Uses BOTH taskId-based and title-based keys to catch duplicates where
- * one block has a taskId and the other doesn't (common when AI omits taskId).
+ * Deduplicate blocks: remove true duplicates only.
+ * - Blocks with the same taskId on the same date → keep the latest (prefer one with taskId set)
+ * - Non-task blocks (meals, breaks) at the exact same position → keep one
+ * Does NOT dedup by title alone — legitimate same-title blocks are allowed
+ * (e.g., two "Study" sessions at different times on the same day).
  */
 function deduplicateBlocks(blocks: TimeBlock[]): TimeBlock[] {
   const seenKeys = new Set<string>();
   const result: TimeBlock[] = [];
 
   // Process in reverse so the LATEST added block wins (prefer blocks with taskId)
-  // Sort preference: blocks with taskId come last (processed first in reverse),
-  // so they win over blocks without taskId
   const sorted = [...blocks].sort((a, b) => {
-    if (a.taskId && !b.taskId) return 1;  // taskId blocks go later → processed first in reverse
+    if (a.taskId && !b.taskId) return 1;
     if (!a.taskId && b.taskId) return -1;
     return 0;
   });
 
   for (let i = sorted.length - 1; i >= 0; i--) {
     const b = sorted[i];
-    // Skip blocks with empty titles
     if (!b.title || !b.title.trim()) continue;
 
-    const titleKey = b.title.toLowerCase().trim();
-
-    // Primary dedup: title + date + type (catches duplicates regardless of taskId)
-    const titleDateKey = `title:${titleKey}:${b.date}:${b.type}`;
-
-    // Secondary dedup: taskId + date (for blocks that share a taskId)
+    // Dedup by taskId + date (blocks for the same task on the same date)
     const taskIdKey = b.taskId ? `task:${b.taskId}:${b.date}` : null;
 
-    // Tertiary dedup: exact position match for non-task blocks (meals, breaks, etc.)
-    const posKey = !b.taskId && b.type !== "task"
+    // Dedup non-task blocks by exact position (same title+date+startHour+type)
+    const titleKey = b.title.toLowerCase().trim();
+    const posKey = b.type !== "task"
       ? `pos:${titleKey}:${b.date}:${b.startHour}:${b.type}`
       : null;
 
-    if (seenKeys.has(titleDateKey)) continue;
     if (taskIdKey && seenKeys.has(taskIdKey)) continue;
+    if (posKey && seenKeys.has(posKey)) continue;
 
-    seenKeys.add(titleDateKey);
     if (taskIdKey) seenKeys.add(taskIdKey);
     if (posKey) seenKeys.add(posKey);
     result.push(b);
   }
 
-  return result.reverse(); // Restore original order
+  return result.reverse();
 }
 
 export function executeToolCalls(
@@ -240,43 +233,99 @@ export function executeToolCalls(
         scheduledDates.add(targetDate);
         blocksChanged = true;
 
-        const newBlocks: TimeBlock[] = tc.arguments.blocks
-          .filter((b: any) => b.title && b.title.trim()) // Skip blocks with empty titles
+        // Filter AI blocks: skip empty titles and past blocks for today
+        const aiBlocks: any[] = tc.arguments.blocks
+          .filter((b: any) => b.title && b.title.trim())
           .filter((b: any) => {
-            // For today: reject blocks that end before the current time (AI scheduled in the past)
             if (targetDate === today && b.startHour + (b.durationHours || 0.5) <= currentHour) {
               return false;
             }
             return true;
-          })
-          .map((b: any, i: number) => ({
-            id: `b-${Date.now()}-${i}`,
-            title: b.title,
-            categoryId: b.categoryId || "",
-            date: targetDate,
-            // For today: clamp start time to current time (rounded up to 15min)
-            startHour: targetDate === today
-              ? Math.max(b.startHour, Math.ceil(currentHour * 4) / 4)
-              : b.startHour,
-            durationHours: b.durationHours,
-            isFixed: b.isFixed || false,
-            type: b.type || "task",
-            taskId: b.taskId,
-          }));
+          });
 
-        // Merge: keep blocks for OTHER dates, replace blocks for THIS date
-        allBlocks = [
-          ...allBlocks.filter((b) => b.date !== targetDate),
-          ...newBlocks,
-        ];
+        // Track which existing block IDs the AI "claimed" (moved/updated)
+        const claimedBlockIds = new Set<string>();
 
-        // Resolve overlaps: fixed blocks take priority, then shift flex blocks
-        const fixedBlocks = newBlocks.filter((b) => b.isFixed);
-        const flexBlocks = newBlocks.filter((b) => !b.isFixed);
-        for (const block of fixedBlocks) {
+        for (let i = 0; i < aiBlocks.length; i++) {
+          const ab = aiBlocks[i];
+          const aiTitle = (ab.title || "").toLowerCase().trim();
+          const aiType = ab.type || "task";
+          const clampedStart = targetDate === today
+            ? Math.max(ab.startHour, Math.ceil(currentHour * 4) / 4)
+            : ab.startHour;
+
+          // Search ALL days for an existing block matching this AI block
+          // Priority: match by taskId first, then fall back to title+type
+          let existing: TimeBlock | undefined;
+          if (ab.taskId) {
+            existing = allBlocks.find(
+              (b) => b.taskId === ab.taskId && !claimedBlockIds.has(b.id)
+            );
+          }
+          if (!existing && aiType === "task") {
+            existing = allBlocks.find(
+              (b) =>
+                b.type === aiType &&
+                b.title.toLowerCase().trim() === aiTitle &&
+                !claimedBlockIds.has(b.id)
+            );
+          }
+
+          if (existing) {
+            // Found an existing block for this task
+            if (existing.isFixed) {
+              // Don't move fixed blocks — claim it so it's not orphaned
+              claimedBlockIds.add(existing.id);
+              continue;
+            }
+            // Move/update the existing block in place (preserves its ID)
+            const idx = allBlocks.findIndex((b) => b.id === existing!.id);
+            if (idx !== -1) {
+              allBlocks[idx] = {
+                ...allBlocks[idx],
+                date: targetDate,
+                startHour: clampedStart,
+                durationHours: ab.durationHours,
+                categoryId: ab.categoryId || allBlocks[idx].categoryId,
+              };
+            }
+            claimedBlockIds.add(existing.id);
+          } else {
+            // No existing block found — create a new one
+            const newBlock: TimeBlock = {
+              id: `b-${Date.now()}-${i}`,
+              title: ab.title,
+              categoryId: ab.categoryId || "",
+              date: targetDate,
+              startHour: clampedStart,
+              durationHours: ab.durationHours,
+              isFixed: ab.isFixed || false,
+              type: aiType,
+              taskId: ab.taskId,
+            };
+            allBlocks.push(newBlock);
+            claimedBlockIds.add(newBlock.id);
+          }
+        }
+
+        // Remove orphaned non-fixed blocks on the target date that the AI didn't mention
+        // (these are blocks the AI decided shouldn't be scheduled today)
+        allBlocks = allBlocks.filter((b) => {
+          if (b.date !== targetDate) return true; // different date — keep
+          if (claimedBlockIds.has(b.id)) return true; // AI mentioned it — keep
+          if (b.isFixed) return true; // fixed block — keep
+          if (b.type === "meal") return true; // meal blocks managed separately — keep
+          return false; // orphaned non-fixed block — remove
+        });
+
+        // Resolve overlaps: fixed blocks first, then flex blocks
+        const dateBlocks = allBlocks.filter((b) => b.date === targetDate);
+        const fixedOnDate = dateBlocks.filter((b) => b.isFixed);
+        const flexOnDate = dateBlocks.filter((b) => !b.isFixed);
+        for (const block of fixedOnDate) {
           allBlocks = resolveOverlaps(allBlocks, block.id);
         }
-        for (const block of flexBlocks) {
+        for (const block of flexOnDate) {
           const dayBlocks = allBlocks.filter((b) => b.date === targetDate && b.id !== block.id);
           const hasConflict = dayBlocks.some(
             (b) => block.startHour < b.startHour + b.durationHours && block.startHour + block.durationHours > b.startHour
