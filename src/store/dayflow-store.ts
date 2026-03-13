@@ -9,7 +9,7 @@ import {
   Category,
   RecurrenceRule,
 } from "@/types/dayflow";
-import { resolveOverlaps } from "@/lib/scheduling-utils";
+import { resolveOverlaps, USER_MAX_OVERLAP } from "@/lib/scheduling-utils";
 import { generateRecurringInstances, cleanupOldRecurringInstances } from "@/lib/recurrence-utils";
 import {
   loadFromCloud,
@@ -487,10 +487,10 @@ export function useDayFlowStore() {
     });
   }, [setState]);
 
-  const updateTimeBlock = useCallback((id: string, updates: Partial<TimeBlock>) => {
+  const updateTimeBlock = useCallback((id: string, updates: Partial<TimeBlock>, maxOverlap?: number) => {
     setState((s) => {
       const updated = s.timeBlocks.map((b) => (b.id === id ? { ...b, ...updates } : b));
-      const resolved = resolveOverlaps(updated, id);
+      const resolved = resolveOverlaps(updated, id, maxOverlap);
       return { ...s, timeBlocks: resolved };
     });
   }, [setState]);

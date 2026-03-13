@@ -73,7 +73,10 @@ export function findNextAvailableSlot(
   return Math.max(currentHour !== undefined ? Math.ceil(currentHour * 4) / 4 : hardStart, hardStart);
 }
 
-const MAX_OVERLAP = 1;
+/** Default: code-initiated moves allow no overlaps */
+const DEFAULT_MAX_OVERLAP = 1;
+/** User drag-drop allows up to 2 blocks at the same time */
+export const USER_MAX_OVERLAP = 2;
 
 /**
  * Count how many blocks overlap at a given point in time.
@@ -85,24 +88,28 @@ function countOverlapsAt(blocks: TimeBlock[], hour: number, excludeId?: string):
 }
 
 /**
- * Check if adding a block would exceed the max overlap limit at any point.
+ * Check if adding a block would exceed the given overlap limit at any point.
  */
-function wouldExceedMaxOverlap(placed: TimeBlock[], block: TimeBlock): boolean {
-  // Check at block start and every 15-min within the block
+function wouldExceedMaxOverlap(placed: TimeBlock[], block: TimeBlock, maxOverlap: number): boolean {
   for (let h = block.startHour; h < block.startHour + block.durationHours; h += 0.25) {
-    if (countOverlapsAt(placed, h, block.id) >= MAX_OVERLAP) return true;
+    if (countOverlapsAt(placed, h, block.id) >= maxOverlap) return true;
   }
   return false;
 }
 
 /**
  * Resolve overlaps after a block is placed at a specific time.
- * No two blocks may occupy the same time slot (MAX_OVERLAP = 1).
+ *
+ * @param maxOverlap - How many blocks can share a time slot.
+ *   Default 1 (code-initiated: no overlaps).
+ *   Pass USER_MAX_OVERLAP (2) for user drag-drop (intentional stacking).
+ *
  * Fixed blocks are never moved. Returns the full updated block list.
  */
 export function resolveOverlaps(
   allBlocks: TimeBlock[],
-  movedBlockId: string
+  movedBlockId: string,
+  maxOverlap: number = DEFAULT_MAX_OVERLAP
 ): TimeBlock[] {
   const blocks = allBlocks.map((b) => ({ ...b }));
   const moved = blocks.find((b) => b.id === movedBlockId);
@@ -130,7 +137,7 @@ export function resolveOverlaps(
     }
 
     // Only displace if adding this block would exceed max overlap
-    if (wouldExceedMaxOverlap(placed, block)) {
+    if (wouldExceedMaxOverlap(placed, block, maxOverlap)) {
       const startHour = findNextAvailableSlot(
         placed,
         block.durationHours,
