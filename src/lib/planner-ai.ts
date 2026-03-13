@@ -205,10 +205,31 @@ export function executeToolCalls(
           ...newBlocks,
         ];
 
-        // Resolve any overlaps within the generated schedule
-        for (const block of newBlocks) {
-          if (block.isFixed) {
-            allBlocks = resolveOverlaps(allBlocks, block.id);
+        // Resolve ALL overlaps within the generated schedule, not just fixed blocks.
+        // Process fixed blocks first (they take priority), then resolve any remaining overlaps.
+        const fixedBlocks = newBlocks.filter((b) => b.isFixed);
+        const flexBlocks = newBlocks.filter((b) => !b.isFixed);
+        for (const block of fixedBlocks) {
+          allBlocks = resolveOverlaps(allBlocks, block.id);
+        }
+        // For non-fixed blocks, check for overlaps and shift them if needed
+        for (const block of flexBlocks) {
+          const dayBlocks = allBlocks.filter((b) => b.date === targetDate && b.id !== block.id);
+          const hasConflict = dayBlocks.some(
+            (b) => block.startHour < b.startHour + b.durationHours && block.startHour + block.durationHours > b.startHour
+          );
+          if (hasConflict) {
+            const newStart = findNextAvailableSlot(
+              dayBlocks,
+              block.durationHours,
+              "any",
+              targetDate,
+              block.startHour
+            );
+            const idx = allBlocks.findIndex((b) => b.id === block.id);
+            if (idx !== -1) {
+              allBlocks[idx] = { ...allBlocks[idx], startHour: newStart };
+            }
           }
         }
 

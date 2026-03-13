@@ -511,37 +511,35 @@ function ScheduleBlock({
           )}
         </div>
 
-        {/* Action buttons — hide on compact blocks to save space */}
-        {!isCompact && (
-          <div className="flex items-center gap-0.5 shrink-0">
-            {onEdit && (
-              <button
-                aria-label="Edit task"
-                onPointerDown={(e) => e.stopPropagation()}
-                onClick={(e) => {
-                  e.stopPropagation();
-                  onEdit();
-                }}
-                className="flex items-center justify-center rounded-lg p-1.5 opacity-50 hover:opacity-100 active:bg-secondary/50 transition-opacity"
-              >
-                <Pencil className="h-3.5 w-3.5 text-muted-foreground" />
-              </button>
-            )}
-            {onMoveToTomorrow && (
-              <button
-                aria-label="Move to tomorrow"
-                onPointerDown={(e) => e.stopPropagation()}
-                onClick={(e) => {
-                  e.stopPropagation();
-                  onMoveToTomorrow();
-                }}
-                className="flex items-center justify-center rounded-lg p-1.5 opacity-50 hover:opacity-100 active:bg-secondary/50 transition-opacity"
-              >
-                <ArrowRight className="h-3.5 w-3.5 text-muted-foreground" />
-              </button>
-            )}
-          </div>
-        )}
+        {/* Action buttons — always show move-to-tomorrow; hide edit on compact */}
+        <div className="flex items-center gap-0.5 shrink-0">
+          {!isCompact && onEdit && (
+            <button
+              aria-label="Edit task"
+              onPointerDown={(e) => e.stopPropagation()}
+              onClick={(e) => {
+                e.stopPropagation();
+                onEdit();
+              }}
+              className="flex items-center justify-center rounded-lg p-1.5 opacity-50 hover:opacity-100 active:bg-secondary/50 transition-opacity"
+            >
+              <Pencil className="h-3.5 w-3.5 text-muted-foreground" />
+            </button>
+          )}
+          {onMoveToTomorrow && (
+            <button
+              aria-label="Move to tomorrow"
+              onPointerDown={(e) => e.stopPropagation()}
+              onClick={(e) => {
+                e.stopPropagation();
+                onMoveToTomorrow();
+              }}
+              className={`flex items-center justify-center rounded-lg opacity-50 hover:opacity-100 active:bg-secondary/50 transition-opacity ${isCompact ? "p-0.5" : "p-1.5"}`}
+            >
+              <ArrowRight className={`text-muted-foreground ${isCompact ? "h-3 w-3" : "h-3.5 w-3.5"}`} />
+            </button>
+          )}
+        </div>
       </div>
     </div>
   );

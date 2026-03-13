@@ -151,7 +151,7 @@ const PLANNER_TOOLS = [
     function: {
       name: "generate_schedule",
       description:
-        "Generate a day schedule as time blocks for a specific date. You can call this multiple times for different dates (e.g. today + tomorrow, or a whole week). For today, only schedule after the current time. For future dates, schedule freely within work hours. Include meals, breaks, and transition buffers.",
+        "Generate a day schedule as time blocks for a specific date. CRITICAL: blocks must NOT overlap — each block's startHour must be >= the previous block's startHour + durationHours. You MUST call this for EACH date that has tasks (call it multiple times). For today, only schedule after the current time. For future dates, schedule freely within work hours. Include meals, breaks, and transition buffers between major blocks.",
       parameters: {
         type: "object",
         properties: {
@@ -511,14 +511,17 @@ Unless the task is truly critical.
 
 == HARD RULES ==
 
+- NEVER OVERLAP BLOCKS. Every block you generate must start AFTER the previous block ends. If block A is at 9:00 for 1h, block B must start at 10:00 or later. This is the #1 most important rule.
+- When generating a schedule, lay out blocks SEQUENTIALLY from earliest to latest. Double-check that startHour >= previous block's (startHour + durationHours).
 - Never schedule more than 2 deep-focus tasks in one day unless the user explicitly asks
 - Never place deep work in a gap under 45 minutes
-- Always protect lunch in full-day schedules unless the user explicitly removes it
+- Always protect lunch and dinner in full-day schedules unless the user explicitly removes it
 - Add 10-15 minute transition buffers between major blocks when possible
 - If a day contains several meetings, reduce expectations for deep work
 - If the user reports low energy, simplify the plan rather than compressing it
 - If a task rolls over 3 times, flag it for breakdown or rethinking
 - Default to under-scheduling rather than over-scheduling
+- The schedule you describe in your text response MUST match the blocks you generate in generate_schedule tool calls. Do not describe a schedule in text without actually creating the matching tool calls.
 
 == TOOL USAGE ==
 
@@ -526,8 +529,10 @@ Unless the task is truly critical.
 - Use conversational text for advice, encouragement, clarification, or discussion
 - You can call multiple tools in one response
 - CRITICAL: When the user brain dumps or gives a list, extract ALL individual tasks and create them with create_tasks. Never skip tasks. If the user lists 30 things, create 30 tasks.
-- After creating tasks with create_tasks, also call generate_schedule to place them on the calendar. DISTRIBUTE tasks across multiple days — call generate_schedule once per day for each day that needs scheduling.
-- You SHOULD call generate_schedule MULTIPLE TIMES in one response for different dates. For example, after creating 20 tasks, call generate_schedule for today (5-6 tasks), tomorrow (5-6 tasks), the day after (5-6 tasks), etc. This is the expected pattern.
+- After creating tasks with create_tasks, you MUST also call generate_schedule to place them on the calendar. Call generate_schedule ONCE PER DAY for EACH day that has tasks.
+- MANDATORY PATTERN: If you're scheduling a week, call generate_schedule 7 times — once for each day. Each call should include ALL blocks for that day (tasks, meals, breaks, transitions) in non-overlapping sequential order.
+- Example: create_tasks (all 30 tasks) → generate_schedule(friday, [...blocks]) → generate_schedule(saturday, [...blocks]) → generate_schedule(sunday, [...blocks]) → etc. Do NOT skip days that have tasks.
+- Each day's blocks list should be a complete day schedule — include meals, transitions, and breaks alongside the tasks. Blocks must be in chronological order with no overlaps.
 - ALWAYS include a conversational message alongside any tool calls
 - Refer to tasks by their title, not their ID
 - For priorities: 1 = urgent/critical, 2 = important, 3 = normal, 4 = low, 5 = whenever
