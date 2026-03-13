@@ -1,10 +1,11 @@
 import { useState, useMemo } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import { useDayFlow } from "@/context/DayFlowContext";
-import { Task, CATEGORY_COLOR_MAP, CATEGORY_COLOR_BG_MAP, CATEGORY_TEXT_COLOR_MAP } from "@/types/dayflow";
+import { Task, TimeBlock, CATEGORY_COLOR_MAP, CATEGORY_COLOR_BG_MAP, CATEGORY_TEXT_COLOR_MAP } from "@/types/dayflow";
 import { Plus, Check, CheckCircle2, ChevronDown, Pin, Trash2 } from "lucide-react";
 import { formatHour } from "@/lib/utils";
 import TaskDetailSheet from "@/components/dayflow/TaskDetailSheet";
+import BlockEditSheet from "@/components/dayflow/BlockEditSheet";
 import QuickAddTask from "@/components/dayflow/QuickAddTask";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { useTaskScheduleSync } from "@/hooks/useTaskScheduleSync";
@@ -29,20 +30,28 @@ export default function TasksPage() {
 
   const { timeBlocks: allTimeBlocks } = useDayFlow();
 
-  // Compute which tasks have fixed blocks in the next 14 days
-  const fixedTaskIds = useMemo(() => {
+  const [editingBlock, setEditingBlock] = useState<TimeBlock | null>(null);
+
+  // Compute which tasks have fixed blocks in the next 14 days, and orphan fixed blocks (no taskId)
+  const { fixedTaskIds, orphanFixedBlocks } = useMemo(() => {
     const today = new Date();
     const twoWeeksOut = new Date();
     twoWeeksOut.setDate(today.getDate() + 14);
     const todayStr = today.toISOString().split("T")[0];
     const cutoffStr = twoWeeksOut.toISOString().split("T")[0];
     const ids = new Set<string>();
+    const orphans: TimeBlock[] = [];
     allTimeBlocks.forEach((b) => {
-      if (b.isFixed && b.taskId && b.date >= todayStr && b.date <= cutoffStr) {
-        ids.add(b.taskId);
+      if (b.isFixed && b.date >= todayStr && b.date <= cutoffStr) {
+        if (b.taskId) {
+          ids.add(b.taskId);
+        } else {
+          orphans.push(b);
+        }
       }
     });
-    return ids;
+    orphans.sort((a, b) => a.date.localeCompare(b.date) || a.startHour - b.startHour);
+    return { fixedTaskIds: ids, orphanFixedBlocks: orphans };
   }, [allTimeBlocks]);
 
   const filtered = useMemo(() => {
@@ -128,7 +137,7 @@ export default function TasksPage() {
             }`}
           >
             <Pin className="h-3 w-3" />
-            Fixed{fixedTaskIds.size > 0 && ` (${fixedTaskIds.size})`}
+            Fixed{(fixedTaskIds.size + orphanFixedBlocks.length) > 0 && ` (${fixedTaskIds.size + orphanFixedBlocks.length})`}
           </button>
           <button
             onClick={() => setTabView("completed")}
@@ -197,9 +206,24 @@ export default function TasksPage() {
               />
             ))}
           </AnimatePresence>
+
+          {/* Show orphan fixed blocks (events without tasks) in Fixed tab */}
+          {tabView === "fixed" && orphanFixedBlocks
+            .filter((b) => !filterCat || b.categoryId === filterCat)
+            .map((block) => (
+              <FixedBlockRow key={block.id} block={block} onTap={() => setEditingBlock(block)} />
+            ))
+          }
         </div>
 
-        {filtered.length === 0 && (
+        {filtered.length === 0 && orphanFixedBlocks.length === 0 && tabView === "fixed" && (
+          <div className="flex flex-col items-center justify-center py-16">
+            <p className="text-sm text-muted-foreground">No fixed tasks in the next 2 weeks</p>
+            <p className="text-xs text-muted-foreground mt-1">Meetings and pinned events show here</p>
+          </div>
+        )}
+
+        {filtered.length === 0 && tabView !== "fixed" && (
           <div className="flex flex-col items-center justify-center py-16">
             <p className="text-sm text-muted-foreground">
               {tabView === "completed" ? "No completed tasks yet" : tabView === "fixed" ? "No fixed tasks in the next 2 weeks" : tabView === "dropped" ? "No dropped tasks" : "No tasks yet"}
@@ -222,6 +246,7 @@ export default function TasksPage() {
       )}
 
       <TaskDetailSheet task={selectedTask} onClose={() => setSelectedTask(null)} />
+      <BlockEditSheet block={editingBlock} onClose={() => setEditingBlock(null)} />
       <QuickAddTask open={showAdd} onClose={() => setShowAdd(false)} />
     </div>
   );
@@ -288,7 +313,37 @@ function TaskRow({
         )}
       </div>
 
-      
+
+    </motion.div>
+  );
+}
+
+function FixedBlockRow({ block, onTap }: { block: TimeBlock; onTap: () => void }) {
+  const { getCategory } = useDayFlow();
+  const cat = getCategory(block.categoryId);
+  const colorKey = cat?.color || "teal";
+  const bgClass = CATEGORY_COLOR_BG_MAP[colorKey] || "bg-secondary";
+
+  return (
+    <motion.div
+      layout
+      initial={{ opacity: 0, y: 4 }}
+      animate={{ opacity: 1, y: 0 }}
+      exit={{ opacity: 0, height: 0 }}
+      transition={{ duration: 0.25, ease: [0.32, 0.72, 0, 1] }}
+      className={`rounded-xl p-3 flex items-center gap-3 cursor-pointer active:opacity-80 transition-opacity ${bgClass}`}
+      onClick={onTap}
+    >
+      <span className="text-sm">📌</span>
+      <div className="flex-1 min-w-0">
+        <p className="text-sm font-medium truncate text-foreground">{block.title}</p>
+        <p className="text-[10px] text-muted-foreground mt-0.5">
+          {new Date(block.date + "T12:00:00").toLocaleDateString("en-US", { weekday: "short", month: "numeric", day: "numeric" })}
+          {" "}
+          {formatHour(block.startHour)} – {formatHour(block.startHour + block.durationHours)}
+          {" "}📌
+        </p>
+      </div>
     </motion.div>
   );
 }
