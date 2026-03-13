@@ -301,8 +301,10 @@ function buildSystemPrompt(currentTasks, preferences, timeBlocks, customProjects
   const dayName = dayNames[now.getDay()];
   const currentHour = now.getHours() + now.getMinutes() / 60;
   const timeStr = now.toLocaleTimeString("en-US", { hour: "2-digit", minute: "2-digit" });
-  const workEndHour = preferences.workEndHour || 18;
-  const workStartHour = preferences.workStartHour || 8;
+  const workEndHour = preferences.workEndHour || 17;
+  const workStartHour = preferences.workStartHour || 9;
+  const sleepStartHour = preferences.sleepStartHour ?? 23;
+  const sleepEndHour = preferences.sleepEndHour ?? 7;
 
   // Build date reference: today + next 13 days
   const dateReference = [];
@@ -368,8 +370,15 @@ Current date: ${today} (${dayName})
 Current time: ${timeStr}
 Current hour (decimal): ${currentHour.toFixed(2)}
 
-Date reference (use these exact dates when scheduling):
+Date reference (AUTHORITATIVE — use these exact dates when scheduling):
 ${dateReference.join("\n")}
+
+CRITICAL: This date reference is dynamically generated from the server's real-time clock. It is ALWAYS correct.
+- NEVER rely on your internal knowledge of what day-of-week a date falls on. Your training data may be from a different year.
+- If the user says "Monday March 16" but the table above shows March 16 is a different day, the TABLE IS CORRECT.
+- When the user mentions a day name (e.g. "Monday"), find it in the table above and use that exact date.
+- When the user mentions a date (e.g. "March 16"), find it in the table above and use the day-of-week shown there.
+- If a user's day name and date conflict, ASK which they meant — do not guess.
 
 == SCHEDULING TIME RULES ==
 
@@ -385,6 +394,16 @@ User's preferences:
 - Dinner: ${preferences.dinnerHour || 18.5}
 - Workout preference: ${preferences.workoutTime}
 - Default task duration: ${preferences.defaultTaskDuration} min
+- Sleep: ${sleepStartHour}:00 – ${sleepEndHour}:00 (NEVER schedule anything during sleep hours)
+
+== SLEEP TIME CONSTRAINT (ABSOLUTE) ==
+
+The user sleeps from ${sleepStartHour}:00 to ${sleepEndHour}:00. This is an ABSOLUTE constraint.
+- NEVER schedule ANY block (task, event, meal, break, transition) during sleep hours.
+- Sleep hours wrap around midnight: ${sleepStartHour}:00 → midnight → ${sleepEndHour}:00 are ALL off-limits.
+- The earliest any block can start is ${sleepEndHour}:00.
+- The latest any block can end is ${sleepStartHour}:00.
+- This takes priority over ALL other scheduling rules, including category windows.
 
 == CATEGORY SCHEDULING WINDOWS (HARD BOUNDARIES) ==
 
