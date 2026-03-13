@@ -457,9 +457,12 @@ const ScheduleBlock = memo(function ScheduleBlock({
   const height = Math.max(rawHeight, 36); // min 36px so buttons always fit
   const isCompact = rawHeight < 44; // compact styling for short blocks
 
-  // Overlap layout
-  const widthPercent = 100 / totalColumns;
-  const leftPercent = column * widthPercent;
+  // Overlap layout — when many blocks overlap, give them more width with slight overlap
+  const isNarrow = totalColumns >= 3;
+  const widthPercent = isNarrow ? Math.max(40, 100 / totalColumns) : 100 / totalColumns;
+  const leftPercent = isNarrow
+    ? column * ((100 - widthPercent) / Math.max(totalColumns - 1, 1))
+    : column * widthPercent;
   const leftCalc = `calc(48px + (100% - 48px) * ${leftPercent / 100})`;
   const widthCalc = `calc((100% - 48px) * ${widthPercent / 100})`;
 
@@ -475,10 +478,14 @@ const ScheduleBlock = memo(function ScheduleBlock({
   const typeIcon =
     block.type === "meal" ? "🍽" : block.type === "break" ? "☕" : block.isFixed ? "📌" : "";
 
+  // When blocks are narrow (3+ overlapping), hide buttons and just show title
+  const showButtons = !isNarrow;
+
   return (
     <div
+      title={block.title}
       className={`absolute rounded-xl transition-shadow overflow-hidden ${bgClass} ${
-        isCompact ? "px-1.5 py-1" : "p-2.5"
+        isCompact || isNarrow ? "px-1.5 py-1" : "p-2.5"
       } ${completed ? "opacity-40" : ""} ${isDragging ? "z-30 shadow-lg scale-[1.02]" : ""}`}
       style={{
         top,
@@ -487,10 +494,11 @@ const ScheduleBlock = memo(function ScheduleBlock({
         width: totalColumns > 1 ? widthCalc : "calc(100% - 48px)",
         zIndex: isDragging ? 30 : Math.floor(displayHour * 4),
       }}
+      onClick={isNarrow && onEdit ? () => onEdit() : undefined}
     >
-      <div className={`flex items-center gap-1 h-full ${isCompact ? "" : "items-start gap-1.5"}`}>
+      <div className={`flex items-center gap-1 h-full ${isCompact || isNarrow ? "" : "items-start gap-1.5"}`}>
         {/* Drag handle — only drag target, uses touch-none to prevent scroll */}
-        {!block.isFixed && (
+        {!block.isFixed && showButtons && (
           <button
             aria-label="Drag to reschedule"
             className="touch-none shrink-0 flex flex-col items-center justify-center opacity-40 active:opacity-70 cursor-grab active:cursor-grabbing rounded p-1 -ml-0.5"
@@ -500,55 +508,58 @@ const ScheduleBlock = memo(function ScheduleBlock({
           </button>
         )}
 
-        {block.type === "task" && onToggle && (
+        {block.type === "task" && onToggle && showButtons && (
           <button
             aria-label={completed ? `Mark "${block.title}" incomplete` : `Complete "${block.title}"`}
             className={`flex shrink-0 items-center justify-center rounded border-[1.5px] transition-all h-5 w-5 ${
               completed ? "bg-primary border-primary" : "border-muted-foreground/40 bg-card/50"
             }`}
+            onClick={(e) => { e.stopPropagation(); onToggle(); }}
           >
             {completed && <Check className="h-3 w-3 text-primary-foreground" />}
           </button>
         )}
-        {block.type !== "task" && <div className={`cat-dot ${dotClass}`} />}
-        <div className="flex-1 min-w-0" onClick={onToggle}>
-          <p className={`font-medium truncate ${isCompact ? "text-[11px]" : "text-xs"} ${completed ? "line-through text-muted-foreground" : "text-foreground"}`}>
+        {block.type !== "task" && !isNarrow && <div className={`cat-dot ${dotClass}`} />}
+        <div className="flex-1 min-w-0" onClick={!isNarrow && onToggle ? () => onToggle() : undefined}>
+          <p className={`font-medium truncate ${isCompact || isNarrow ? "text-[11px]" : "text-xs"} ${completed ? "line-through text-muted-foreground" : "text-foreground"}`}>
             {typeIcon} {block.title}
           </p>
-          {!isCompact && height > 44 && (
+          {!isCompact && !isNarrow && height > 44 && (
             <p className="text-meta text-[10px] text-muted-foreground mt-0.5">
               {formatHour(displayHour)} – {formatHour(displayHour + block.durationHours)}
             </p>
           )}
         </div>
 
-        {/* Action buttons — always visible */}
-        <div className="flex items-center gap-0 shrink-0">
-          {onEdit && (
-            <button
-              aria-label="Edit task"
-              onClick={(e) => {
-                e.stopPropagation();
-                onEdit();
-              }}
-              className="flex items-center justify-center rounded-lg p-1.5 opacity-60 active:bg-secondary/50 transition-opacity"
-            >
-              <Pencil className="h-3.5 w-3.5 text-muted-foreground" />
-            </button>
-          )}
-          {onMoveToTomorrow && (
-            <button
-              aria-label="Move to tomorrow"
-              onClick={(e) => {
-                e.stopPropagation();
-                onMoveToTomorrow();
-              }}
-              className="flex items-center justify-center rounded-lg p-1.5 opacity-60 active:bg-secondary/50 transition-opacity -mr-0.5"
-            >
-              <ArrowRight className="h-3.5 w-3.5 text-muted-foreground" />
-            </button>
-          )}
-        </div>
+        {/* Action buttons — visible when block has enough width */}
+        {showButtons && (
+          <div className="flex items-center gap-0 shrink-0">
+            {onEdit && (
+              <button
+                aria-label="Edit task"
+                onClick={(e) => {
+                  e.stopPropagation();
+                  onEdit();
+                }}
+                className="flex items-center justify-center rounded-lg p-1.5 opacity-60 active:bg-secondary/50 transition-opacity"
+              >
+                <Pencil className="h-3.5 w-3.5 text-muted-foreground" />
+              </button>
+            )}
+            {onMoveToTomorrow && (
+              <button
+                aria-label="Move to tomorrow"
+                onClick={(e) => {
+                  e.stopPropagation();
+                  onMoveToTomorrow();
+                }}
+                className="flex items-center justify-center rounded-lg p-1.5 opacity-60 active:bg-secondary/50 transition-opacity -mr-0.5"
+              >
+                <ArrowRight className="h-3.5 w-3.5 text-muted-foreground" />
+              </button>
+            )}
+          </div>
+        )}
       </div>
     </div>
   );

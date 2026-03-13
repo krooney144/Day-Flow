@@ -83,6 +83,33 @@ function getAutoScheduleDateForHorizon(
   }
 }
 
+/**
+ * Deduplicate blocks: for each date, keep only one block per taskId,
+ * and for fixed blocks without taskId, keep only one per title+startHour.
+ */
+function deduplicateBlocks(blocks: TimeBlock[]): TimeBlock[] {
+  const seen = new Set<string>();
+  const result: TimeBlock[] = [];
+
+  // Process in reverse so the LATEST added block (from generate_schedule) wins
+  for (let i = blocks.length - 1; i >= 0; i--) {
+    const b = blocks[i];
+    // Skip blocks with empty titles
+    if (!b.title || !b.title.trim()) continue;
+
+    // Dedup key: taskId+date for task blocks, title+date+startHour for fixed/other blocks
+    const key = b.taskId
+      ? `task:${b.taskId}:${b.date}`
+      : `block:${b.title.toLowerCase().trim()}:${b.date}:${b.startHour}:${b.type}`;
+
+    if (seen.has(key)) continue;
+    seen.add(key);
+    result.push(b);
+  }
+
+  return result.reverse(); // Restore original order
+}
+
 export function executeToolCalls(
   toolCalls: ToolCall[],
   store: {
@@ -108,10 +135,12 @@ export function executeToolCalls(
   const currentHour = now.getHours() + now.getMinutes() / 60;
   const hasScheduleCall = toolCalls.some((tc) => tc.name === "generate_schedule");
   let createdTasks: Task[] = [];
-  // Track all blocks across all dates
+  // Track all blocks across all dates — single source of truth, committed once at end
   let allBlocks = [...existingTimeBlocks];
-  // Track which dates were scheduled by AI (to know which dates got replaced)
+  // Track which dates were fully replaced by generate_schedule
   const scheduledDates = new Set<string>();
+  // Track whether any block-level changes happened (to know if we need to commit)
+  let blocksChanged = false;
 
   for (const tc of toolCalls) {
     switch (tc.name) {
@@ -187,18 +216,21 @@ export function executeToolCalls(
       case "generate_schedule": {
         const targetDate = tc.arguments.date || today;
         scheduledDates.add(targetDate);
+        blocksChanged = true;
 
-        const newBlocks: TimeBlock[] = tc.arguments.blocks.map((b: any, i: number) => ({
-          id: `b-${Date.now()}-${i}`,
-          title: b.title,
-          categoryId: b.categoryId || "",
-          date: targetDate,
-          startHour: b.startHour,
-          durationHours: b.durationHours,
-          isFixed: b.isFixed || false,
-          type: b.type || "task",
-          taskId: b.taskId,
-        }));
+        const newBlocks: TimeBlock[] = tc.arguments.blocks
+          .filter((b: any) => b.title && b.title.trim()) // Skip blocks with empty titles
+          .map((b: any, i: number) => ({
+            id: `b-${Date.now()}-${i}`,
+            title: b.title,
+            categoryId: b.categoryId || "",
+            date: targetDate,
+            startHour: b.startHour,
+            durationHours: b.durationHours,
+            isFixed: b.isFixed || false,
+            type: b.type || "task",
+            taskId: b.taskId,
+          }));
 
         // Merge: keep blocks for OTHER dates, replace blocks for THIS date
         allBlocks = [
@@ -206,14 +238,12 @@ export function executeToolCalls(
           ...newBlocks,
         ];
 
-        // Resolve ALL overlaps within the generated schedule, not just fixed blocks.
-        // Process fixed blocks first (they take priority), then resolve any remaining overlaps.
+        // Resolve overlaps: fixed blocks take priority, then shift flex blocks
         const fixedBlocks = newBlocks.filter((b) => b.isFixed);
         const flexBlocks = newBlocks.filter((b) => !b.isFixed);
         for (const block of fixedBlocks) {
           allBlocks = resolveOverlaps(allBlocks, block.id);
         }
-        // For non-fixed blocks, check for overlaps and shift them if needed
         for (const block of flexBlocks) {
           const dayBlocks = allBlocks.filter((b) => b.date === targetDate && b.id !== block.id);
           const hasConflict = dayBlocks.some(
@@ -234,7 +264,6 @@ export function executeToolCalls(
           }
         }
 
-        store.setTimeBlocks(allBlocks);
         const dateLabel = targetDate === today ? "today" : targetDate;
         summaries.push(`Generated schedule for ${dateLabel}`);
         break;
@@ -250,6 +279,7 @@ export function executeToolCalls(
         break;
       }
       case "add_buffer_block": {
+        blocksChanged = true;
         const block: TimeBlock = {
           id: `b-${Date.now()}`,
           title: tc.arguments.title,
@@ -260,22 +290,38 @@ export function executeToolCalls(
           isFixed: false,
           type: tc.arguments.type || "break",
         };
-        store.addTimeBlock(block);
         allBlocks.push(block);
         summaries.push(`Added ${tc.arguments.type || "break"}`);
         break;
       }
       case "move_blocks_to_date": {
         const moves: { blockId: string; targetDate: string }[] = tc.arguments.moves;
+        let movedCount = 0;
         for (const move of moves) {
-          store.moveBlockToDate(move.blockId, move.targetDate);
-          // Update allBlocks tracking
           const idx = allBlocks.findIndex((b) => b.id === move.blockId);
-          if (idx !== -1) {
-            allBlocks[idx] = { ...allBlocks[idx], date: move.targetDate };
-          }
+          if (idx === -1) continue;
+
+          const block = allBlocks[idx];
+          // Skip if already on the target date
+          if (block.date === move.targetDate) continue;
+
+          // Skip if a block with the same task/title already exists on target date
+          // (generate_schedule may have already created it there)
+          const alreadyOnTarget = allBlocks.some((b) =>
+            b.date === move.targetDate &&
+            b.id !== block.id &&
+            (
+              (b.taskId && b.taskId === block.taskId) ||
+              (b.title.toLowerCase().trim() === block.title.toLowerCase().trim() && b.type === block.type)
+            )
+          );
+          if (alreadyOnTarget) continue;
+
+          allBlocks[idx] = { ...block, date: move.targetDate };
+          blocksChanged = true;
+          movedCount++;
         }
-        summaries.push(`Moved ${moves.length} block${moves.length > 1 ? "s" : ""}`);
+        summaries.push(`Moved ${movedCount} block${movedCount !== 1 ? "s" : ""}`);
         break;
       }
     }
@@ -303,11 +349,10 @@ export function executeToolCalls(
     // Find created tasks missing a schedule block, auto-schedule them across multiple days
     const scheduledIds = new Set(allBlocks.filter((b) => b.taskId).map((b) => b.taskId));
     const unscheduled = createdTasks.filter((t) => !scheduledIds.has(t.id));
-    // Group by horizon and spread across days
     const prefs = store.preferences || {};
     let dayIndex = 0;
     for (const task of unscheduled) {
-      if (task.horizon === "backlog") continue; // Don't auto-schedule backlog tasks
+      if (task.horizon === "backlog") continue;
       const targetDate = getAutoScheduleDateForHorizon(task.horizon, prefs, dayIndex);
       const isToday = targetDate === today;
       const minHour = isToday ? currentHour : undefined;
@@ -334,18 +379,12 @@ export function executeToolCalls(
       });
       dayIndex++;
     }
-
-    store.setTimeBlocks(allBlocks);
-    if (unscheduled.length > 0) {
-      summaries.push(`Auto-scheduled ${unscheduled.length} missed task${unscheduled.length > 1 ? "s" : ""}`);
-    }
+    blocksChanged = true;
   }
 
   // Auto-schedule created tasks if AI didn't call generate_schedule
   if (createdTasks.length > 0 && !hasScheduleCall) {
-    // Schedule all tasks except backlog across multiple days
     const schedulableTasks = createdTasks.filter((t) => t.horizon !== "backlog");
-    const autoBlocks: TimeBlock[] = [];
     const prefs2 = store.preferences || {};
     let dayIdx = 0;
 
@@ -356,14 +395,14 @@ export function executeToolCalls(
       const durationHours = (task.estimatedMinutes || 30) / 60;
       const catWindow2 = store.preferences?.categories?.find((c) => c.id === task.categoryId)?.schedulingWindow;
       const startHour = findNextAvailableSlot(
-        [...allBlocks, ...autoBlocks],
+        allBlocks,
         durationHours,
         task.preferredTime,
         targetDate,
         minHour,
         catWindow2
       );
-      const block: TimeBlock = {
+      allBlocks.push({
         id: `b-auto-${task.id}`,
         taskId: task.id,
         title: task.title,
@@ -373,15 +412,16 @@ export function executeToolCalls(
         durationHours,
         isFixed: false,
         type: "task",
-      };
-      autoBlocks.push(block);
+      });
       dayIdx++;
     }
-    if (autoBlocks.length > 0) {
-      store.addTimeBlocks(autoBlocks);
-      const dateSet = new Set(autoBlocks.map((b) => b.date));
-      summaries.push(`Auto-scheduled ${autoBlocks.length} task${autoBlocks.length > 1 ? "s" : ""} across ${dateSet.size} day${dateSet.size > 1 ? "s" : ""}`);
-    }
+    blocksChanged = true;
+  }
+
+  // Final dedup and commit — single store update for all block changes
+  if (blocksChanged) {
+    allBlocks = deduplicateBlocks(allBlocks);
+    store.setTimeBlocks(allBlocks);
   }
 
   return summaries;

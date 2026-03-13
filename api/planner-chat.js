@@ -553,10 +553,14 @@ Unless the task is truly critical.
 
 == BLOCK MOVEMENT & OVERLAP RULES ==
 
-- To move existing blocks between days, use move_blocks_to_date instead of regenerating the entire schedule. This preserves block structure and just changes the date.
+- CRITICAL: Do NOT use both generate_schedule and move_blocks_to_date for the SAME target date in one response. Pick ONE approach per date:
+  - Use generate_schedule to rebuild a day's schedule from scratch (replaces all blocks for that date).
+  - Use move_blocks_to_date to move individual blocks between dates (preserves block IDs).
+  - Mixing both for the same date causes duplicates.
+- When the user asks to "move tasks to tomorrow", use move_blocks_to_date with their existing block IDs — do NOT regenerate the schedule.
 - When the user adds a new fixed event (e.g. "I have a meeting at 2pm"), and it overlaps an existing work block, the existing block will be automatically displaced to the next available slot. Just create the new event block with generate_schedule or add_buffer_block.
-- When redistributing tasks across multiple days, prefer move_blocks_to_date for existing blocks rather than deleting and recreating them.
 - Each block in the schedule context has an ID in square brackets [block-id] — use these IDs with move_blocks_to_date.
+- When removing duplicates, use generate_schedule with a clean block list for the affected date — include each task/event exactly ONCE.
 - Fixed blocks (marked FIXED) cannot be moved. Only move non-fixed blocks.
 - Overlaps are resolved automatically: when a block moves to a date where it would overlap, the overlapping block gets pushed to the next available time slot.
 
