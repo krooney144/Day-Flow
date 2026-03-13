@@ -41,20 +41,46 @@ export async function callPlannerAI(context: PlannerContext): Promise<PlannerRes
 // findNextAvailableSlot is now imported from scheduling-utils.ts
 
 /**
- * Determine the best date to auto-schedule a task on.
- * If past work hours, defaults to tomorrow; otherwise today.
+ * Get the next N schedulable dates starting from today/tomorrow.
+ * If past work hours, starts from tomorrow.
  */
-function getAutoScheduleDate(preferences: { workEndHour?: number }): string {
+function getSchedulableDates(preferences: { workEndHour?: number; workStartHour?: number }, count: number = 7): string[] {
   const now = new Date();
   const currentHour = now.getHours() + now.getMinutes() / 60;
   const workEnd = preferences.workEndHour ?? 18;
 
-  if (currentHour >= workEnd) {
-    const tomorrow = new Date(now);
-    tomorrow.setDate(tomorrow.getDate() + 1);
-    return tomorrow.toISOString().split("T")[0];
+  const dates: string[] = [];
+  // If past work hours, start from tomorrow; otherwise include today
+  const startOffset = currentHour >= workEnd ? 1 : 0;
+  for (let i = startOffset; i < startOffset + count; i++) {
+    const d = new Date(now);
+    d.setDate(d.getDate() + i);
+    dates.push(d.toISOString().split("T")[0]);
   }
-  return now.toISOString().split("T")[0];
+  return dates;
+}
+
+/**
+ * Determine the best date to auto-schedule a task on based on its horizon.
+ */
+function getAutoScheduleDateForHorizon(
+  horizon: string | undefined,
+  preferences: { workEndHour?: number; workStartHour?: number },
+  dayIndex: number
+): string {
+  const dates = getSchedulableDates(preferences);
+  switch (horizon) {
+    case "today":
+      return dates[0]; // Today or tomorrow if past work hours
+    case "soon":
+      return dates[Math.min(dayIndex % 3, dates.length - 1)]; // Spread across next 2-3 days
+    case "this-week":
+      return dates[Math.min(dayIndex % dates.length, dates.length - 1)]; // Spread across the week
+    case "backlog":
+      return dates[Math.min(3 + (dayIndex % 4), dates.length - 1)]; // Later in the week
+    default:
+      return dates[Math.min(dayIndex, dates.length - 1)]; // Default: spread
+  }
 }
 
 export function executeToolCalls(
@@ -235,14 +261,15 @@ export function executeToolCalls(
       }
     }
 
-    // Find created tasks missing a schedule block, auto-schedule them
+    // Find created tasks missing a schedule block, auto-schedule them across multiple days
     const scheduledIds = new Set(allBlocks.filter((b) => b.taskId).map((b) => b.taskId));
     const unscheduled = createdTasks.filter((t) => !scheduledIds.has(t.id));
+    // Group by horizon and spread across days
+    const prefs = store.preferences || {};
+    let dayIndex = 0;
     for (const task of unscheduled) {
-      // Pick the best date: use a scheduled date if available, otherwise auto-detect
-      const targetDate = scheduledDates.size > 0
-        ? [...scheduledDates][0]
-        : getAutoScheduleDate(store.preferences || {});
+      if (task.horizon === "backlog") continue; // Don't auto-schedule backlog tasks
+      const targetDate = getAutoScheduleDateForHorizon(task.horizon, prefs, dayIndex);
       const isToday = targetDate === today;
       const minHour = isToday ? currentHour : undefined;
       const durationHours = (task.estimatedMinutes || 30) / 60;
@@ -266,6 +293,7 @@ export function executeToolCalls(
         isFixed: false,
         type: "task",
       });
+      dayIndex++;
     }
 
     store.setTimeBlocks(allBlocks);
@@ -276,12 +304,14 @@ export function executeToolCalls(
 
   // Auto-schedule created tasks if AI didn't call generate_schedule
   if (createdTasks.length > 0 && !hasScheduleCall) {
-    const schedulableTasks = createdTasks.filter((t) => t.horizon === "today" || t.horizon === "soon" || !t.horizon);
+    // Schedule all tasks except backlog across multiple days
+    const schedulableTasks = createdTasks.filter((t) => t.horizon !== "backlog");
     const autoBlocks: TimeBlock[] = [];
+    const prefs2 = store.preferences || {};
+    let dayIdx = 0;
 
     for (const task of schedulableTasks) {
-      // If past work hours, schedule for tomorrow; otherwise today
-      const targetDate = getAutoScheduleDate(store.preferences || {});
+      const targetDate = getAutoScheduleDateForHorizon(task.horizon, prefs2, dayIdx);
       const isToday = targetDate === today;
       const minHour = isToday ? currentHour : undefined;
       const durationHours = (task.estimatedMinutes || 30) / 60;
@@ -306,10 +336,12 @@ export function executeToolCalls(
         type: "task",
       };
       autoBlocks.push(block);
+      dayIdx++;
     }
     if (autoBlocks.length > 0) {
       store.addTimeBlocks(autoBlocks);
-      summaries.push(`Auto-scheduled ${autoBlocks.length} task${autoBlocks.length > 1 ? "s" : ""}`);
+      const dateSet = new Set(autoBlocks.map((b) => b.date));
+      summaries.push(`Auto-scheduled ${autoBlocks.length} task${autoBlocks.length > 1 ? "s" : ""} across ${dateSet.size} day${dateSet.size > 1 ? "s" : ""}`);
     }
   }
 
