@@ -220,12 +220,22 @@ export function executeToolCalls(
 
         const newBlocks: TimeBlock[] = tc.arguments.blocks
           .filter((b: any) => b.title && b.title.trim()) // Skip blocks with empty titles
+          .filter((b: any) => {
+            // For today: reject blocks that end before the current time (AI scheduled in the past)
+            if (targetDate === today && b.startHour + (b.durationHours || 0.5) <= currentHour) {
+              return false;
+            }
+            return true;
+          })
           .map((b: any, i: number) => ({
             id: `b-${Date.now()}-${i}`,
             title: b.title,
             categoryId: b.categoryId || "",
             date: targetDate,
-            startHour: b.startHour,
+            // For today: clamp start time to current time (rounded up to 15min)
+            startHour: targetDate === today
+              ? Math.max(b.startHour, Math.ceil(currentHour * 4) / 4)
+              : b.startHour,
             durationHours: b.durationHours,
             isFixed: b.isFixed || false,
             type: b.type || "task",

@@ -5,6 +5,7 @@ import { CATEGORY_COLOR_MAP, CATEGORY_COLOR_BG_MAP, TimeBlock, Task } from "@/ty
 import { ChevronLeft, ChevronRight, Check, ArrowRight, Pencil, GripVertical } from "lucide-react";
 import { formatHour } from "@/lib/utils";
 import TaskDetailSheet from "@/components/dayflow/TaskDetailSheet";
+import BlockEditSheet from "@/components/dayflow/BlockEditSheet";
 import QuickAddTask from "@/components/dayflow/QuickAddTask";
 import ScheduleChatFab from "@/components/dayflow/ScheduleChatFab";
 import { useMealBlocks } from "@/hooks/useMealBlocks";
@@ -38,6 +39,7 @@ export default function SchedulePage() {
   const [view, setView] = useState<ScheduleView>("day");
   const [dateOffset, setDateOffset] = useState(0);
   const [editingTask, setEditingTask] = useState<Task | null>(null);
+  const [editingBlock, setEditingBlock] = useState<TimeBlock | null>(null);
   const [showAdd, setShowAdd] = useState(false);
 
   const currentDate = useMemo(() => {
@@ -54,6 +56,14 @@ export default function SchedulePage() {
   const handleEditTask = useCallback((taskId: string) => {
     const task = tasks.find((t) => t.id === taskId);
     if (task) setEditingTask(task);
+  }, [tasks]);
+
+  const handleEditBlock = useCallback((block: TimeBlock) => {
+    if (block.taskId) {
+      const task = tasks.find((t) => t.id === block.taskId);
+      if (task) { setEditingTask(task); return; }
+    }
+    setEditingBlock(block);
   }, [tasks]);
 
   return (
@@ -118,11 +128,12 @@ export default function SchedulePage() {
           <DayView
             dateStr={dateStr}
             onEditTask={handleEditTask}
+            onEditBlock={handleEditBlock}
             onSwipePrev={() => setDateOffset((d) => d - 1)}
             onSwipeNext={() => setDateOffset((d) => d + 1)}
           />
         )}
-        {view === "3day" && <ThreeDayView baseDate={currentDate} onEditTask={handleEditTask} />}
+        {view === "3day" && <ThreeDayView baseDate={currentDate} onEditTask={handleEditTask} onEditBlock={handleEditBlock} />}
         {view === "week" && (
           <WeekView
             baseDate={currentDate}
@@ -145,6 +156,7 @@ export default function SchedulePage() {
 
       {/* Task Detail Sheet */}
       <TaskDetailSheet task={editingTask} onClose={() => setEditingTask(null)} />
+      <BlockEditSheet block={editingBlock} onClose={() => setEditingBlock(null)} />
       <QuickAddTask open={showAdd} onClose={() => setShowAdd(false)} />
     </div>
   );
@@ -205,9 +217,10 @@ function getScrollForCurrentTime(containerHeight: number): number {
   return targetTopHour * HOUR_HEIGHT;
 }
 
-function DayView({ dateStr, onEditTask, onSwipePrev, onSwipeNext }: {
+function DayView({ dateStr, onEditTask, onEditBlock, onSwipePrev, onSwipeNext }: {
   dateStr: string;
   onEditTask: (taskId: string) => void;
+  onEditBlock: (block: TimeBlock) => void;
   onSwipePrev: () => void;
   onSwipeNext: () => void;
 }) {
@@ -281,7 +294,6 @@ function DayView({ dateStr, onEditTask, onSwipePrev, onSwipeNext }: {
   const rafRef = useRef<number | null>(null);
 
   const handleDragHandlePointerDown = useCallback((blockId: string, e: React.PointerEvent) => {
-    if (blocks.find(b => b.id === blockId)?.isFixed) return;
     e.preventDefault();
     e.stopPropagation();
     const startY = e.clientY;
@@ -411,12 +423,12 @@ function DayView({ dateStr, onEditTask, onSwipePrev, onSwipeNext }: {
             isDragging={draggingId === block.id}
             dragPreviewHour={draggingId === block.id ? dragPreviewHour : null}
             onDragHandlePointerDown={(e) => handleDragHandlePointerDown(block.id, e)}
-            onMoveToTomorrow={!block.isFixed ? () => {
+            onMoveToTomorrow={() => {
               const tomorrow = new Date();
               tomorrow.setDate(tomorrow.getDate() + 1);
               moveBlockToDate(block.id, tomorrow.toISOString().split("T")[0]);
-            } : undefined}
-            onEdit={block.taskId ? () => onEditTask(block.taskId!) : undefined}
+            }}
+            onEdit={() => onEditBlock(block)}
           />
         ))}
       </div>
@@ -498,7 +510,7 @@ const ScheduleBlock = memo(function ScheduleBlock({
     >
       <div className={`flex items-center gap-1 h-full ${isCompact || isNarrow ? "" : "items-start gap-1.5"}`}>
         {/* Drag handle — only drag target, uses touch-none to prevent scroll */}
-        {!block.isFixed && showButtons && (
+        {showButtons && (
           <button
             aria-label="Drag to reschedule"
             className="touch-none shrink-0 flex flex-col items-center justify-center opacity-40 active:opacity-70 cursor-grab active:cursor-grabbing rounded p-1 -ml-0.5"
@@ -625,13 +637,13 @@ const ThreeDayGridBlock = memo(function ThreeDayGridBlock({
   );
 });
 
-function ThreeDayView({ baseDate, onEditTask }: { baseDate: Date; onEditTask: (taskId: string) => void }) {
+function ThreeDayView({ baseDate, onEditTask, onEditBlock }: { baseDate: Date; onEditTask: (taskId: string) => void; onEditBlock: (block: TimeBlock) => void }) {
   const isDesktop = useIsDesktop();
 
   if (isDesktop) {
-    return <ThreeDayGridView baseDate={baseDate} onEditTask={onEditTask} />;
+    return <ThreeDayGridView baseDate={baseDate} onEditTask={onEditTask} onEditBlock={onEditBlock} />;
   }
-  return <ThreeDayCompactView baseDate={baseDate} onEditTask={onEditTask} />;
+  return <ThreeDayCompactView baseDate={baseDate} onEditTask={onEditTask} onEditBlock={onEditBlock} />;
 }
 
 // ─── Desktop: side-by-side hourly grids ───
@@ -639,7 +651,7 @@ const GRID_START = 8;   // Default visible start
 const GRID_END = 18;    // Default visible end
 const GRID_HOUR_HEIGHT = 48; // Slightly shorter per-hour for 3 columns
 
-function ThreeDayGridView({ baseDate, onEditTask }: { baseDate: Date; onEditTask: (taskId: string) => void }) {
+function ThreeDayGridView({ baseDate, onEditTask, onEditBlock }: { baseDate: Date; onEditTask: (taskId: string) => void; onEditBlock: (block: TimeBlock) => void }) {
   const { getBlocksForDate, getCategory } = useDayFlow();
   const scrollRef = useRef<HTMLDivElement>(null);
 
@@ -765,7 +777,7 @@ function ThreeDayGridView({ baseDate, onEditTask }: { baseDate: Date; onEditTask
                     totalColumns={totalColumns}
                     hourHeight={GRID_HOUR_HEIGHT}
                     startHour={fullStartHour}
-                    onEdit={block.taskId ? () => onEditTask(block.taskId!) : undefined}
+                    onEdit={() => onEditBlock(block)}
                   />
                 ))}
               </div>
@@ -778,7 +790,7 @@ function ThreeDayGridView({ baseDate, onEditTask }: { baseDate: Date; onEditTask
 }
 
 // ─── Mobile: compact card list (unchanged) ───
-function ThreeDayCompactView({ baseDate, onEditTask }: { baseDate: Date; onEditTask: (taskId: string) => void }) {
+function ThreeDayCompactView({ baseDate, onEditTask, onEditBlock }: { baseDate: Date; onEditTask: (taskId: string) => void; onEditBlock: (block: TimeBlock) => void }) {
   const { getBlocksForDate, getCategory } = useDayFlow();
 
   const days = [0, 1, 2].map((offset) => {
@@ -814,17 +826,17 @@ function ThreeDayCompactView({ baseDate, onEditTask }: { baseDate: Date; onEditT
                   return (
                     <div
                       key={block.id}
-                      className={`flex items-center gap-2 rounded-lg px-2.5 py-1.5 ${bgClass} ${block.taskId ? "cursor-pointer active:opacity-80" : ""}`}
-                      onClick={block.taskId ? () => onEditTask(block.taskId!) : undefined}
+                      className={`flex items-center gap-2 rounded-lg px-2.5 py-1.5 ${bgClass} cursor-pointer active:opacity-80`}
+                      onClick={() => onEditBlock(block)}
                     >
                       <div className={`cat-dot ${dotClass}`} />
-                      <span className="text-xs font-medium text-foreground truncate flex-1">{block.title}</span>
+                      <span className="text-xs font-medium text-foreground truncate flex-1">
+                        {block.isFixed ? "📌 " : ""}{block.title}
+                      </span>
                       <span className="text-meta text-[10px] text-muted-foreground shrink-0">
                         {formatHour(block.startHour)}
                       </span>
-                      {block.taskId && (
-                        <Pencil className="h-3 w-3 text-muted-foreground opacity-40 shrink-0" />
-                      )}
+                      <Pencil className="h-3 w-3 text-muted-foreground opacity-40 shrink-0" />
                     </div>
                   );
                 })}

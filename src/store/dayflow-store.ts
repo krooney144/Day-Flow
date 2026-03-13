@@ -455,6 +455,13 @@ export function useDayFlowStore() {
     }));
   }, [setState]);
 
+  const removeTimeBlock = useCallback((id: string) => {
+    setState((s) => ({
+      ...s,
+      timeBlocks: s.timeBlocks.filter((b) => b.id !== id),
+    }));
+  }, [setState]);
+
   const moveBlockToDate = useCallback((blockId: string, newDate: string) => {
     setState((s) => {
       const updated = s.timeBlocks.map((b) =>
@@ -576,6 +583,7 @@ export function useDayFlowStore() {
     addTimeBlock,
     addTimeBlocks,
     updateTimeBlock,
+    removeTimeBlock,
     moveBlockToDate,
     displaceBlock,
     reorderTasks,
