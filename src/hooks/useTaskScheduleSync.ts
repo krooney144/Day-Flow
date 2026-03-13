@@ -24,8 +24,16 @@ export function useTaskScheduleSync() {
     const scheduledTaskIds = new Set(
       timeBlocks.filter((b) => b.taskId).map((b) => b.taskId)
     );
+    // Also track scheduled titles to catch blocks where AI omitted taskId
+    const scheduledTitles = new Set(
+      timeBlocks
+        .filter((b) => b.type === "task")
+        .map((b) => b.title.toLowerCase().trim())
+    );
 
-    const orphaned = activeTasks.filter((t) => !scheduledTaskIds.has(t.id));
+    const orphaned = activeTasks.filter(
+      (t) => !scheduledTaskIds.has(t.id) && !scheduledTitles.has(t.title.toLowerCase().trim())
+    );
     if (orphaned.length === 0) return;
 
     // Build list of schedulable dates
