@@ -7,6 +7,31 @@ import ReactMarkdown from "react-markdown";
 import { callPlannerAI, executeToolCalls } from "@/lib/planner-ai";
 import { toast } from "sonner";
 
+/**
+ * Parse [QUESTION]...[OPTIONS]...[/QUESTION] blocks from AI text.
+ * Returns { before, question, options, after } or null if no block found.
+ */
+function parseQuestionBlock(text: string): {
+  before: string;
+  question: string;
+  options: string[];
+  after: string;
+} | null {
+  const match = text.match(
+    /\[QUESTION\]\s*\n?(.*?)\n?\[OPTIONS\]\s*\n?(.*?)\n?\[\/QUESTION\]/s
+  );
+  if (!match) return null;
+  const idx = match.index!;
+  const before = text.slice(0, idx).trim();
+  const after = text.slice(idx + match[0].length).trim();
+  const question = match[1].trim();
+  const options = match[2]
+    .split("|")
+    .map((o) => o.trim())
+    .filter(Boolean);
+  return { before, question, options, after };
+}
+
 export default function ChatPage() {
   const store = useDayFlow();
   const { chatMessages, addChatMessage, clearChat, tasks, preferences, timeBlocks, customProjects } = store;
@@ -145,27 +170,59 @@ export default function ChatPage() {
 
         <div className="space-y-3">
           <AnimatePresence>
-            {chatMessages.map((msg) => (
-              <motion.div
-                key={msg.id}
-                initial={{ opacity: 0, y: 8 }}
-                animate={{ opacity: 1, y: 0 }}
-                transition={{ duration: 0.25, ease: [0.32, 0.72, 0, 1] }}
-                className={`flex ${msg.role === "user" ? "justify-end" : "justify-start"}`}
-              >
-                <div
-                  className={`max-w-[85%] rounded-2xl px-4 py-3 ${
-                    msg.role === "user"
-                      ? "bg-primary text-primary-foreground rounded-br-md"
-                      : "bg-secondary text-secondary-foreground rounded-bl-md"
-                  }`}
+            {chatMessages.map((msg, msgIndex) => {
+              const isLastAssistant =
+                msg.role === "assistant" &&
+                msgIndex === chatMessages.length - 1;
+              const parsed =
+                msg.role === "assistant"
+                  ? parseQuestionBlock(msg.content)
+                  : null;
+
+              return (
+                <motion.div
+                  key={msg.id}
+                  initial={{ opacity: 0, y: 8 }}
+                  animate={{ opacity: 1, y: 0 }}
+                  transition={{ duration: 0.25, ease: [0.32, 0.72, 0, 1] }}
+                  className={`flex flex-col ${msg.role === "user" ? "items-end" : "items-start"}`}
                 >
-                  <div className="text-sm leading-relaxed prose prose-sm max-w-none [&_p]:m-0 [&_ul]:mt-1 [&_ol]:mt-1 [&_li]:text-sm">
-                    <ReactMarkdown>{msg.content}</ReactMarkdown>
+                  <div
+                    className={`max-w-[85%] rounded-2xl px-4 py-3 ${
+                      msg.role === "user"
+                        ? "bg-primary text-primary-foreground rounded-br-md"
+                        : "bg-secondary text-secondary-foreground rounded-bl-md"
+                    }`}
+                  >
+                    <div className="text-sm leading-relaxed prose prose-sm max-w-none [&_p]:m-0 [&_ul]:mt-1 [&_ol]:mt-1 [&_li]:text-sm">
+                      {parsed ? (
+                        <>
+                          {parsed.before && <ReactMarkdown>{parsed.before}</ReactMarkdown>}
+                          <p className="font-medium mt-1">{parsed.question}</p>
+                          {parsed.after && <ReactMarkdown>{parsed.after}</ReactMarkdown>}
+                        </>
+                      ) : (
+                        <ReactMarkdown>{msg.content}</ReactMarkdown>
+                      )}
+                    </div>
                   </div>
-                </div>
-              </motion.div>
-            ))}
+                  {/* Quick reply buttons for the latest assistant message with options */}
+                  {parsed && isLastAssistant && !isTyping && (
+                    <div className="flex flex-wrap gap-2 mt-2 max-w-[85%]">
+                      {parsed.options.map((option) => (
+                        <button
+                          key={option}
+                          onClick={() => processMessage(option)}
+                          className="rounded-xl bg-secondary border border-border px-3 py-2 text-xs font-medium text-secondary-foreground active:bg-border transition-colors text-left"
+                        >
+                          {option}
+                        </button>
+                      ))}
+                    </div>
+                  )}
+                </motion.div>
+              );
+            })}
           </AnimatePresence>
 
           {isTyping && (

@@ -35,24 +35,26 @@ interface DayFlowState {
 }
 
 const defaultPreferences: UserPreferences = {
-  workStartHour: 8,
-  workEndHour: 18,
+  workStartHour: 9,
+  workEndHour: 17,
   lunchHour: 12,
   dinnerHour: 18.5,
   workoutTime: "morning",
   defaultTaskDuration: 30,
   includeBreaks: true,
   protectMealTimes: true,
+  sleepStartHour: 23,
+  sleepEndHour: 7,
   categories: DEFAULT_CATEGORIES.map((c) => ({
     ...c,
     schedulingWindow:
       c.id === "work"
-        ? { startHour: 8, endHour: 18 }
+        ? { startHour: 9, endHour: 17 }
         : c.id === "school"
-        ? { startHour: 7, endHour: 22 }
+        ? { startHour: 10, endHour: 22 }
         : c.id === "social"
-        ? { startHour: 9, endHour: 23 }
-        : { startHour: 7, endHour: 21 }, // life-admin
+        ? { startHour: 10, endHour: 22 }
+        : { startHour: 10, endHour: 21 }, // life-admin
   })),
 };
 

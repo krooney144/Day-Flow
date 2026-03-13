@@ -215,6 +215,27 @@ export default function SettingsPage() {
           />
         </Section>
 
+        {/* Sleep */}
+        <Section title="Sleep">
+          <p className="text-xs text-muted-foreground px-3 py-2">
+            Nothing will be scheduled during sleep hours.
+          </p>
+          <HourStepper
+            label="Sleep starts"
+            value={preferences.sleepStartHour ?? 23}
+            onChange={(v) => updatePreferences({ sleepStartHour: v })}
+            min={20}
+            max={24}
+          />
+          <HourStepper
+            label="Wake up"
+            value={preferences.sleepEndHour ?? 7}
+            onChange={(v) => updatePreferences({ sleepEndHour: v })}
+            min={4}
+            max={10}
+          />
+        </Section>
+
         {/* Account */}
         <Section title="Account">
           <button

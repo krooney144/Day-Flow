@@ -79,6 +79,8 @@ export interface UserPreferences {
   defaultTaskDuration: number;
   includeBreaks: boolean;
   protectMealTimes: boolean;
+  sleepStartHour: number;  // e.g. 23 = 11 PM
+  sleepEndHour: number;    // e.g. 7 = 7 AM
   categories: Category[];
 }
 
