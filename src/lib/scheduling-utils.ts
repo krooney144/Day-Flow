@@ -73,9 +73,32 @@ export function findNextAvailableSlot(
   return Math.max(currentHour !== undefined ? Math.ceil(currentHour * 4) / 4 : hardStart, hardStart);
 }
 
+const MAX_OVERLAP = 3;
+
+/**
+ * Count how many blocks overlap at a given point in time.
+ */
+function countOverlapsAt(blocks: TimeBlock[], hour: number, excludeId?: string): number {
+  return blocks.filter(
+    (b) => b.id !== excludeId && hour >= b.startHour && hour < b.startHour + b.durationHours
+  ).length;
+}
+
+/**
+ * Check if adding a block would exceed the max overlap limit at any point.
+ */
+function wouldExceedMaxOverlap(placed: TimeBlock[], block: TimeBlock): boolean {
+  // Check at block start and every 15-min within the block
+  for (let h = block.startHour; h < block.startHour + block.durationHours; h += 0.25) {
+    if (countOverlapsAt(placed, h, block.id) >= MAX_OVERLAP) return true;
+  }
+  return false;
+}
+
 /**
  * Resolve overlaps after a block is placed at a specific time.
- * Displaced blocks get shifted forward to the next available slot.
+ * Allows up to MAX_OVERLAP (3) blocks at the same time.
+ * Only displaces blocks when a 4th+ would overlap.
  * Fixed blocks are never moved. Returns the full updated block list.
  */
 export function resolveOverlaps(
@@ -107,16 +130,8 @@ export function resolveOverlaps(
       continue;
     }
 
-    // Check if current position conflicts with any placed block
-    const hasConflict = placed.some(
-      (p) =>
-        p.date === block.date &&
-        block.startHour < p.startHour + p.durationHours &&
-        block.startHour + block.durationHours > p.startHour
-    );
-
-    if (hasConflict) {
-      // Find next available slot after the block's current time
+    // Only displace if adding this block would exceed max overlap
+    if (wouldExceedMaxOverlap(placed, block)) {
       const startHour = findNextAvailableSlot(
         placed,
         block.durationHours,
