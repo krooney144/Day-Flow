@@ -21,17 +21,19 @@ export function findNextAvailableSlot(
     evening: [17, 21],
     any: [8, 20],
   };
-  let [rangeStart, rangeEnd] = defaultRanges[preferredTime] || defaultRanges.any;
 
-  // Constrain to category scheduling window if provided
-  if (categoryWindow) {
-    rangeStart = Math.max(rangeStart, categoryWindow.startHour);
-    rangeEnd = Math.min(rangeEnd, categoryWindow.endHour);
-    // If preferred time falls entirely outside the window, use the window directly
-    if (rangeStart >= rangeEnd) {
-      rangeStart = categoryWindow.startHour;
-      rangeEnd = categoryWindow.endHour;
-    }
+  // Category window is the hard boundary — preferred time is a hint within it
+  const hardStart = categoryWindow ? categoryWindow.startHour : 0;
+  const hardEnd = categoryWindow ? categoryWindow.endHour : 24;
+
+  const [prefStart, prefEnd] = defaultRanges[preferredTime] || defaultRanges.any;
+  // Clamp preferred range to within the category window
+  let rangeStart = Math.max(prefStart, hardStart);
+  let rangeEnd = Math.min(prefEnd, hardEnd);
+  // If preferred time falls entirely outside the window, use the full window
+  if (rangeStart >= rangeEnd) {
+    rangeStart = hardStart;
+    rangeEnd = hardEnd;
   }
 
   // Clamp range start to current time (rounded up to next 15min) if provided
@@ -45,9 +47,9 @@ export function findNextAvailableSlot(
     .map((b) => ({ start: b.startHour, end: b.startHour + b.durationHours }))
     .sort((a, b) => a.start - b.start);
 
-  // Fallback range: use category window if available, else broad range
-  const fallbackStart = categoryWindow ? Math.max(categoryWindow.startHour, now15) : Math.max(7, now15);
-  const fallbackEnd = categoryWindow ? categoryWindow.endHour : 22;
+  // Fallback range: full category window (or broad range if no window)
+  const fallbackStart = Math.max(hardStart, now15);
+  const fallbackEnd = hardEnd;
 
   for (const tryRange of [
     [effectiveStart, rangeEnd],
@@ -67,8 +69,8 @@ export function findNextAvailableSlot(
       candidate = Math.round(candidate * 4) / 4;
     }
   }
-  // Fallback: schedule at next available hour from now
-  return currentHour !== undefined ? Math.ceil(currentHour * 4) / 4 : 8;
+  // Fallback: schedule at start of category window or 8am
+  return Math.max(currentHour !== undefined ? Math.ceil(currentHour * 4) / 4 : hardStart, hardStart);
 }
 
 /**

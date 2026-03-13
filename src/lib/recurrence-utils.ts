@@ -44,6 +44,17 @@ export function generateRecurringInstances(
 
       if (alreadyExists) continue;
 
+      // Also check if a task with the same title already has a block on this date
+      // (e.g., AI already scheduled it) — skip to avoid duplicates
+      const titleLower = template.title.toLowerCase().trim();
+      const hasBlockOnDate = existingBlocks.some(
+        (b) => b.date === dateStr && b.title.toLowerCase().trim() === titleLower
+      ) || newBlocks.some(
+        (b) => b.date === dateStr && b.title.toLowerCase().trim() === titleLower
+      );
+
+      if (hasBlockOnDate) continue;
+
       // Create a new instance
       const instanceId = `t-rec-${rule.id}-${dateStr}`;
       const instance: Task = {

@@ -10,11 +10,13 @@ const DURATION_OPTIONS = [15, 30, 45, 60, 90, 120];
 const TIME_OF_DAY_OPTIONS: TimeOfDay[] = ["morning", "afternoon", "evening", "any"];
 
 function formatHourLabel(hour: number): string {
-  if (hour === 0 || hour === 24) return "12:00 AM";
-  if (hour === 12) return "12:00 PM";
-  const ampm = hour < 12 ? "AM" : "PM";
-  const display = hour > 12 ? hour - 12 : hour;
-  return `${display}:00 ${ampm}`;
+  const hours = Math.floor(hour);
+  const mins = Math.round((hour - hours) * 60);
+  if (hours === 0 || hours === 24) return mins > 0 ? `12:${mins.toString().padStart(2, "0")} AM` : "12:00 AM";
+  if (hours === 12) return mins > 0 ? `12:${mins.toString().padStart(2, "0")} PM` : "12:00 PM";
+  const ampm = hours < 12 ? "AM" : "PM";
+  const display = hours > 12 ? hours - 12 : hours;
+  return mins > 0 ? `${display}:${mins.toString().padStart(2, "0")} ${ampm}` : `${display}:00 ${ampm}`;
 }
 
 export default function SettingsPage() {

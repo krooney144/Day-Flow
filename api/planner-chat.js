@@ -386,6 +386,16 @@ User's preferences:
 - Workout preference: ${preferences.workoutTime}
 - Default task duration: ${preferences.defaultTaskDuration} min
 
+== CATEGORY SCHEDULING WINDOWS (HARD BOUNDARIES) ==
+
+Each category has a scheduling window that MUST be respected. NEVER schedule a task outside its category's window:
+${(preferences.categories || []).map((c) => {
+  const w = c.schedulingWindow || { startHour: 7, endHour: 21 };
+  return `- ${c.id}: ${w.startHour}:00 – ${w.endHour}:00`;
+}).join("\n")}
+
+When placing blocks in generate_schedule, check that each block's startHour and endHour (startHour + durationHours) fall within its category's scheduling window. If a task's preferred time conflicts with its category window, schedule it within the window instead.
+
 NOTE: Meal blocks (lunch & dinner) are automatically generated for today and tomorrow by the app. When generating schedules, work AROUND existing meal blocks — do not remove them. If the user explicitly asks to skip a meal or change a meal time, that's fine.
 
 Current tasks:
