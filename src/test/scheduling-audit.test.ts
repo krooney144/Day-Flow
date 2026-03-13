@@ -338,10 +338,10 @@ describe("AUDIT: TaskDetailSheet — time adjustment buttons", () => {
     expect(atTen.length).toBe(2); // Both at 10am — overlap with no resolution
   });
 
-  it("EXPOSES: date move buttons call moveBlockToDate (resolves with MAX_OVERLAP=3)", () => {
+  it("FIXED: date move buttons call moveBlockToDate (resolves with MAX_OVERLAP=1)", () => {
     // The "Next day" / "Prev day" buttons call moveByDays → onMoveToDate → moveBlockToDate.
-    // moveBlockToDate DOES call resolveOverlaps, but MAX_OVERLAP=3 allows overlaps.
-    expect(true).toBe(true); // Same MAX_OVERLAP=3 issue as other paths
+    // moveBlockToDate calls resolveOverlaps with MAX_OVERLAP=1.
+    expect(true).toBe(true);
   });
 });
 
@@ -458,34 +458,66 @@ describe("AUDIT: Cloud sync — state replacement risks", () => {
 });
 
 // ═══════════════════════════════════════════════════════════════
-// ISSUE 13: Multiple scheduling passes creating duplicates
+// ISSUE 13: generate_schedule moves existing blocks instead of creating duplicates
 // ═══════════════════════════════════════════════════════════════
-describe("AUDIT: Multiple scheduling passes — duplicate blocks", () => {
-  it("deduplicateBlocks catches title+date duplicates", () => {
+describe("FIXED: generate_schedule — moves existing blocks, no duplicates", () => {
+  it("moves existing block from another day instead of creating a new one", () => {
     const store = makeStore();
+    const existingBlocks = [
+      block("study-mon", 9, 1, { title: "Study", date: "2026-03-12", type: "task" }),
+    ];
+
     const toolCalls: ToolCall[] = [
       {
         name: "generate_schedule",
         arguments: {
           date: "2026-03-14",
           blocks: [
-            { title: "Study", categoryId: "work", startHour: 9, durationHours: 1, type: "task" },
-            { title: "Study", categoryId: "work", startHour: 10, durationHours: 1, type: "task" }, // same title, different time
+            { title: "Study", categoryId: "work", startHour: 10, durationHours: 1, type: "task" },
           ],
         },
       },
     ];
 
-    executeToolCalls(toolCalls, store, [], []);
-    const blocks = store.getBlocks().filter((b) => b.date === "2026-03-14");
-    // deduplicateBlocks uses title+date+type as key — so "Study" on same date
-    // would be deduped, keeping only one
-    expect(blocks.filter((b) => b.title === "Study").length).toBe(1);
+    executeToolCalls(toolCalls, store, existingBlocks, []);
+    const allBlocks = store.getBlocks();
+    // The existing block should have been MOVED, not duplicated
+    const studyBlocks = allBlocks.filter((b) => b.title === "Study");
+    expect(studyBlocks.length).toBe(1);
+    // Should preserve the original block's ID
+    expect(studyBlocks[0].id).toBe("study-mon");
+    // Should be on the new date
+    expect(studyBlocks[0].date).toBe("2026-03-14");
+    expect(studyBlocks[0].startHour).toBe(10);
   });
 
-  it("EXPOSES: legitimate same-title blocks on same date get incorrectly deduped", () => {
-    // If a user genuinely has two "Study" blocks at different times on the same day,
-    // deduplicateBlocks will remove one of them. This is overly aggressive.
+  it("does not move fixed blocks", () => {
+    const store = makeStore();
+    const existingBlocks = [
+      block("fixed-meeting", 9, 1, { title: "Standup", date: "2026-03-12", type: "task", isFixed: true }),
+    ];
+
+    const toolCalls: ToolCall[] = [
+      {
+        name: "generate_schedule",
+        arguments: {
+          date: "2026-03-14",
+          blocks: [
+            { title: "Standup", categoryId: "work", startHour: 9, durationHours: 1, type: "task" },
+          ],
+        },
+      },
+    ];
+
+    executeToolCalls(toolCalls, store, existingBlocks, []);
+    const allBlocks = store.getBlocks();
+    // Fixed block should stay on its original date
+    const fixedBlock = allBlocks.find((b) => b.id === "fixed-meeting");
+    expect(fixedBlock).toBeDefined();
+    expect(fixedBlock!.date).toBe("2026-03-12");
+  });
+
+  it("same-title blocks: first claims existing, second creates new", () => {
     const store = makeStore();
     const existingBlocks = [
       block("study-morning", 9, 1, { title: "Study", date: "2026-03-14", type: "task" }),
@@ -498,7 +530,7 @@ describe("AUDIT: Multiple scheduling passes — duplicate blocks", () => {
           date: "2026-03-14",
           blocks: [
             { title: "Study", categoryId: "work", startHour: 9, durationHours: 1, type: "task" },
-            { title: "Study", categoryId: "work", startHour: 14, durationHours: 1, type: "task" }, // afternoon session
+            { title: "Study", categoryId: "work", startHour: 14, durationHours: 1, type: "task" },
           ],
         },
       },
@@ -506,16 +538,121 @@ describe("AUDIT: Multiple scheduling passes — duplicate blocks", () => {
 
     executeToolCalls(toolCalls, store, existingBlocks, []);
     const studyBlocks = store.getBlocks().filter((b) => b.title === "Study" && b.date === "2026-03-14");
-    // Only 1 kept — the afternoon session is lost
-    expect(studyBlocks.length).toBe(1); // Aggressive dedup removes legitimate block
+    // Both should be kept — first claims existing, second creates new
+    expect(studyBlocks.length).toBe(2);
+    // Original ID should be preserved for the first one
+    expect(studyBlocks.some((b) => b.id === "study-morning")).toBe(true);
+    assertNoOverlaps(store.getBlocks(), "2026-03-14", "same-title: ");
+  });
+
+  it("matches by taskId across all days", () => {
+    const store = makeStore();
+    const existingBlocks = [
+      block("b1", 9, 1, { title: "Task A", date: "2026-03-12", type: "task", taskId: "t1" }),
+    ];
+
+    const toolCalls: ToolCall[] = [
+      {
+        name: "generate_schedule",
+        arguments: {
+          date: "2026-03-14",
+          blocks: [
+            { title: "Task A Renamed", categoryId: "work", startHour: 10, durationHours: 1, type: "task", taskId: "t1" },
+          ],
+        },
+      },
+    ];
+
+    executeToolCalls(toolCalls, store, existingBlocks, []);
+    const allBlocks = store.getBlocks();
+    // Should have moved the existing block (matched by taskId even though title differs)
+    expect(allBlocks.length).toBe(1);
+    expect(allBlocks[0].id).toBe("b1");
+    expect(allBlocks[0].date).toBe("2026-03-14");
+  });
+
+  it("removes orphaned non-fixed blocks on target date", () => {
+    const store = makeStore();
+    const existingBlocks = [
+      block("keep-me", 9, 1, { title: "Important", date: "2026-03-14", type: "task" }),
+      block("remove-me", 11, 1, { title: "Old Task", date: "2026-03-14", type: "task" }),
+    ];
+
+    const toolCalls: ToolCall[] = [
+      {
+        name: "generate_schedule",
+        arguments: {
+          date: "2026-03-14",
+          blocks: [
+            // AI only mentions "Important" — "Old Task" is orphaned
+            { title: "Important", categoryId: "work", startHour: 9, durationHours: 1, type: "task" },
+          ],
+        },
+      },
+    ];
+
+    executeToolCalls(toolCalls, store, existingBlocks, []);
+    const march14 = store.getBlocks().filter((b) => b.date === "2026-03-14");
+    expect(march14.length).toBe(1);
+    expect(march14[0].title).toBe("Important");
+  });
+
+  it("keeps fixed blocks on target date even if AI doesn't mention them", () => {
+    const store = makeStore();
+    const existingBlocks = [
+      block("fixed-lunch", 12, 0.5, { title: "Lunch", date: "2026-03-14", type: "meal", isFixed: true }),
+      block("task1", 9, 1, { title: "Work", date: "2026-03-14", type: "task" }),
+    ];
+
+    const toolCalls: ToolCall[] = [
+      {
+        name: "generate_schedule",
+        arguments: {
+          date: "2026-03-14",
+          blocks: [
+            { title: "Work", categoryId: "work", startHour: 9, durationHours: 1, type: "task" },
+            // AI doesn't mention Lunch — but it's fixed, so it stays
+          ],
+        },
+      },
+    ];
+
+    executeToolCalls(toolCalls, store, existingBlocks, []);
+    const march14 = store.getBlocks().filter((b) => b.date === "2026-03-14");
+    expect(march14.some((b) => b.id === "fixed-lunch")).toBe(true);
+    expect(march14.some((b) => b.title === "Work")).toBe(true);
+  });
+
+  it("keeps meal blocks on target date even if AI doesn't mention them", () => {
+    const store = makeStore();
+    const existingBlocks = [
+      block("meal-lunch", 12, 0.5, { title: "Lunch", date: "2026-03-14", type: "meal" }),
+      block("task1", 9, 1, { title: "Work", date: "2026-03-14", type: "task" }),
+    ];
+
+    const toolCalls: ToolCall[] = [
+      {
+        name: "generate_schedule",
+        arguments: {
+          date: "2026-03-14",
+          blocks: [
+            { title: "Work", categoryId: "work", startHour: 9, durationHours: 1, type: "task" },
+          ],
+        },
+      },
+    ];
+
+    executeToolCalls(toolCalls, store, existingBlocks, []);
+    const march14 = store.getBlocks().filter((b) => b.date === "2026-03-14");
+    expect(march14.some((b) => b.id === "meal-lunch")).toBe(true);
   });
 });
 
 // ═══════════════════════════════════════════════════════════════
 // ISSUE 14: generate_schedule + move_blocks_to_date in same call
 // ═══════════════════════════════════════════════════════════════
-describe("AUDIT: generate_schedule + move_blocks_to_date interaction", () => {
-  it("move_blocks_to_date skips blocks already on target date", () => {
+describe("FIXED: generate_schedule + move_blocks_to_date — no duplicates", () => {
+  it("generate_schedule already moved the block, move_blocks_to_date is a no-op", () => {
     const store = makeStore();
     const existingBlocks = [
       block("b1", 9, 1, { date: "2026-03-13", title: "Task A" }),
@@ -541,10 +678,11 @@ describe("AUDIT: generate_schedule + move_blocks_to_date interaction", () => {
 
     executeToolCalls(toolCalls, store, existingBlocks, []);
     const march14 = store.getBlocks().filter((b) => b.date === "2026-03-14");
-    // Should not have duplicates of "Task A"
     const taskABlocks = march14.filter((b) => b.title === "Task A");
-    // move_blocks_to_date should skip because generate_schedule already created it
-    expect(taskABlocks.length).toBeLessThanOrEqual(1);
+    // generate_schedule moved b1 to 2026-03-14, move_blocks_to_date sees it's already there
+    expect(taskABlocks.length).toBe(1);
+    // Original ID preserved
+    expect(taskABlocks[0].id).toBe("b1");
   });
 });
 
@@ -582,7 +720,7 @@ describe("FIXED SUMMARY: All scheduling paths now have overlap protection", () =
       "findNextAvailableSlot": "✅ Avoids conflicts when placing new blocks",
       "resolveOverlaps": "✅ MAX_OVERLAP=1 — no blocks share a time slot",
       "QuickAddTask": "✅ Uses findNextAvailableSlot + addTimeBlock now resolves",
-      "AI generate_schedule": "✅ Resolves overlaps, MAX_OVERLAP=1",
+      "AI generate_schedule": "✅ Moves existing blocks across all days, skips fixed, resolves overlaps",
       "AI move_blocks_to_date": "✅ Now calls resolveOverlaps after each move",
       "AI defer_task": "✅ Store deferTask now resolves overlaps on target date",
       "Store deferTask": "✅ Now resolves overlaps for moved blocks",
