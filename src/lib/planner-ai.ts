@@ -84,26 +84,48 @@ function getAutoScheduleDateForHorizon(
 }
 
 /**
- * Deduplicate blocks: for each date, keep only one block per taskId,
- * and for fixed blocks without taskId, keep only one per title+startHour.
+ * Deduplicate blocks: for each date, keep only one block per task title+date,
+ * and for non-task blocks, keep only one per title+date+startHour+type.
+ * Uses BOTH taskId-based and title-based keys to catch duplicates where
+ * one block has a taskId and the other doesn't (common when AI omits taskId).
  */
 function deduplicateBlocks(blocks: TimeBlock[]): TimeBlock[] {
-  const seen = new Set<string>();
+  const seenKeys = new Set<string>();
   const result: TimeBlock[] = [];
 
-  // Process in reverse so the LATEST added block (from generate_schedule) wins
-  for (let i = blocks.length - 1; i >= 0; i--) {
-    const b = blocks[i];
+  // Process in reverse so the LATEST added block wins (prefer blocks with taskId)
+  // Sort preference: blocks with taskId come last (processed first in reverse),
+  // so they win over blocks without taskId
+  const sorted = [...blocks].sort((a, b) => {
+    if (a.taskId && !b.taskId) return 1;  // taskId blocks go later → processed first in reverse
+    if (!a.taskId && b.taskId) return -1;
+    return 0;
+  });
+
+  for (let i = sorted.length - 1; i >= 0; i--) {
+    const b = sorted[i];
     // Skip blocks with empty titles
     if (!b.title || !b.title.trim()) continue;
 
-    // Dedup key: taskId+date for task blocks, title+date+startHour for fixed/other blocks
-    const key = b.taskId
-      ? `task:${b.taskId}:${b.date}`
-      : `block:${b.title.toLowerCase().trim()}:${b.date}:${b.startHour}:${b.type}`;
+    const titleKey = b.title.toLowerCase().trim();
 
-    if (seen.has(key)) continue;
-    seen.add(key);
+    // Primary dedup: title + date + type (catches duplicates regardless of taskId)
+    const titleDateKey = `title:${titleKey}:${b.date}:${b.type}`;
+
+    // Secondary dedup: taskId + date (for blocks that share a taskId)
+    const taskIdKey = b.taskId ? `task:${b.taskId}:${b.date}` : null;
+
+    // Tertiary dedup: exact position match for non-task blocks (meals, breaks, etc.)
+    const posKey = !b.taskId && b.type !== "task"
+      ? `pos:${titleKey}:${b.date}:${b.startHour}:${b.type}`
+      : null;
+
+    if (seenKeys.has(titleDateKey)) continue;
+    if (taskIdKey && seenKeys.has(taskIdKey)) continue;
+
+    seenKeys.add(titleDateKey);
+    if (taskIdKey) seenKeys.add(taskIdKey);
+    if (posKey) seenKeys.add(posKey);
     result.push(b);
   }
 
@@ -338,27 +360,37 @@ export function executeToolCalls(
   }
 
   // Reconcile task IDs: if AI called both create_tasks and generate_schedule,
-  // the schedule blocks may reference AI-invented IDs instead of real ones.
+  // the schedule blocks may reference AI-invented IDs or have undefined taskId.
+  // Match ALL blocks to created tasks by title, not just those with existing taskId.
   if (createdTasks.length > 0 && hasScheduleCall) {
-    const titleToId = new Map<string, Task>();
+    const titleToTask = new Map<string, Task>();
     for (const task of createdTasks) {
-      titleToId.set(task.title.toLowerCase().trim(), task);
+      titleToTask.set(task.title.toLowerCase().trim(), task);
     }
 
     for (const block of allBlocks) {
-      if (!block.taskId) continue;
-      const isReal = createdTasks.some((t) => t.id === block.taskId);
-      if (isReal) continue;
-      const matchedTask = titleToId.get(block.title.toLowerCase().trim());
-      if (matchedTask) {
-        block.taskId = matchedTask.id;
-        block.categoryId = matchedTask.categoryId;
-      }
+      const matchedTask = titleToTask.get(block.title.toLowerCase().trim());
+      if (!matchedTask) continue;
+
+      // Block already has the correct real taskId — skip
+      if (block.taskId === matchedTask.id) continue;
+
+      // Block has no taskId, or has an AI-invented one — fix it
+      block.taskId = matchedTask.id;
+      block.categoryId = matchedTask.categoryId;
     }
 
-    // Find created tasks missing a schedule block, auto-schedule them across multiple days
+    // Find created tasks missing a schedule block, auto-schedule them across multiple days.
+    // Check by BOTH taskId and title to avoid duplicates.
     const scheduledIds = new Set(allBlocks.filter((b) => b.taskId).map((b) => b.taskId));
-    const unscheduled = createdTasks.filter((t) => !scheduledIds.has(t.id));
+    const scheduledTitles = new Set(
+      allBlocks
+        .filter((b) => b.type === "task")
+        .map((b) => b.title.toLowerCase().trim())
+    );
+    const unscheduled = createdTasks.filter(
+      (t) => !scheduledIds.has(t.id) && !scheduledTitles.has(t.title.toLowerCase().trim())
+    );
     const prefs = store.preferences || {};
     let dayIndex = 0;
     for (const task of unscheduled) {
