@@ -224,7 +224,7 @@ function DayView({ dateStr, onEditTask, onEditBlock, onSwipePrev, onSwipeNext }:
   onSwipePrev: () => void;
   onSwipeNext: () => void;
 }) {
-  const { getBlocksForDate, getCategory, toggleTaskComplete, tasks, updateTimeBlock, moveBlockToDate, displaceBlock } = useDayFlow();
+  const { getBlocksForDate, getCategory, toggleTaskComplete, tasks, updateTimeBlock, moveBlockToDate } = useDayFlow();
   const blocks = getBlocksForDate(dateStr);
   const now = new Date();
   const currentHour = now.getHours() + now.getMinutes() / 60;
@@ -333,7 +333,6 @@ function DayView({ dateStr, onEditTask, onEditBlock, onSwipePrev, onSwipeNext }:
         if (block) {
           const clamped = Math.max(START_HOUR, Math.min(END_HOUR - block.durationHours, h));
           updateTimeBlock(blockId, { startHour: clamped });
-          displaceBlock(blockId);
         }
       }
       setDraggingId(null);
@@ -344,7 +343,7 @@ function DayView({ dateStr, onEditTask, onEditBlock, onSwipePrev, onSwipeNext }:
     window.addEventListener("pointermove", onMove);
     window.addEventListener("pointerup", onUp);
     cleanupRef.current = cleanup;
-  }, [blocks, getHourFromPointer, updateTimeBlock, displaceBlock]);
+  }, [blocks, getHourFromPointer, updateTimeBlock]);
 
   return (
     <div

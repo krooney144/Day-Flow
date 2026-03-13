@@ -21,7 +21,7 @@ function formatBlockDate(dateStr: string): string {
 }
 
 export default function BlockEditSheet({ block, onClose }: Props) {
-  const { updateTimeBlock, removeTimeBlock, moveBlockToDate } = useDayFlow();
+  const { updateTimeBlock, removeTimeBlock } = useDayFlow();
 
   const [title, setTitle] = useState("");
   const [date, setDate] = useState("");
@@ -45,12 +45,11 @@ export default function BlockEditSheet({ block, onClose }: Props) {
   const isToday = date === todayStr;
 
   const handleSave = () => {
-    // If date changed, move the block first
-    if (date !== block.date) {
-      moveBlockToDate(block.id, date);
-    }
+    // Single atomic update: date + time + duration + title + isFixed
+    // updateTimeBlock now resolves overlaps automatically
     updateTimeBlock(block.id, {
       title,
+      date,
       startHour,
       durationHours,
       isFixed,

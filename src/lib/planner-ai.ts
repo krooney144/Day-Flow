@@ -323,6 +323,7 @@ export function executeToolCalls(
           type: tc.arguments.type || "break",
         };
         allBlocks.push(block);
+        allBlocks = resolveOverlaps(allBlocks, block.id);
         summaries.push(`Added ${tc.arguments.type || "break"}`);
         break;
       }
@@ -350,6 +351,7 @@ export function executeToolCalls(
           if (alreadyOnTarget) continue;
 
           allBlocks[idx] = { ...block, date: move.targetDate };
+          allBlocks = resolveOverlaps(allBlocks, block.id);
           blocksChanged = true;
           movedCount++;
         }

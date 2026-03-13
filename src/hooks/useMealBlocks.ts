@@ -46,7 +46,7 @@ export function useMealBlocks() {
           date,
           startHour: lunchHour,
           durationHours: 0.5,
-          isFixed: false,
+          isFixed: true,
           type: "meal",
         });
       }
@@ -63,7 +63,7 @@ export function useMealBlocks() {
           date,
           startHour: dinnerHour,
           durationHours: 0.5,
-          isFixed: false,
+          isFixed: true,
           type: "meal",
         });
       }

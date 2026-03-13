@@ -73,7 +73,7 @@ export function findNextAvailableSlot(
   return Math.max(currentHour !== undefined ? Math.ceil(currentHour * 4) / 4 : hardStart, hardStart);
 }
 
-const MAX_OVERLAP = 3;
+const MAX_OVERLAP = 1;
 
 /**
  * Count how many blocks overlap at a given point in time.
@@ -97,8 +97,7 @@ function wouldExceedMaxOverlap(placed: TimeBlock[], block: TimeBlock): boolean {
 
 /**
  * Resolve overlaps after a block is placed at a specific time.
- * Allows up to MAX_OVERLAP (3) blocks at the same time.
- * Only displaces blocks when a 4th+ would overlap.
+ * No two blocks may occupy the same time slot (MAX_OVERLAP = 1).
  * Fixed blocks are never moved. Returns the full updated block list.
  */
 export function resolveOverlaps(
