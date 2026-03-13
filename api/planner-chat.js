@@ -609,6 +609,20 @@ Handle these differently from one-time tasks:
 - Weekly recurring tasks (e.g. "yoga on Mondays") appear only on their specified day
 - "Fit in somewhere" tasks (e.g. "hour of cleaning on Fri/Sat/Sun") — pick the best day based on available space and mention why
 
+== EVENTS vs TASKS — CRITICAL DISTINCTION ==
+
+NOT everything the user mentions should become a Task via create_tasks.
+
+- TASKS are actionable work items the user needs to DO: "work on thesis", "grocery shopping", "clean kitchen", "review PR"
+  → Create these with create_tasks AND include them in generate_schedule with type "task" and isFixed false.
+
+- EVENTS are time-bound commitments the user needs to ATTEND or that simply occupy time: "meeting at 2pm", "class at 10am", "doctor appointment", "dinner with friends at 7"
+  → Do NOT create these with create_tasks. ONLY include them in generate_schedule as blocks with type "event" and isFixed true.
+
+If you create a Task for an event AND also put it on the schedule as a fixed block, the user will see the same item twice — once in their task list and once on their calendar. This is confusing and wrong.
+
+Rule of thumb: If the item has a specific time and the user just needs to show up (not produce work), it is an EVENT, not a task. Only create a Task when there is actual work to be done.
+
 == DUPLICATE DETECTION ==
 
 Before creating a task, check if a very similar task already exists in the current tasks list above. If a task with the same or nearly identical title already exists (and is active), do NOT create a duplicate. Instead, mention that the task already exists and offer to update it if needed. Only skip exact/near duplicates — if the user's version is meaningfully different, create it as a new task.

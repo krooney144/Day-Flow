@@ -86,16 +86,18 @@ function getAutoScheduleDateForHorizon(
 /**
  * Deduplicate blocks: remove true duplicates only.
  * - Blocks with the same taskId on the same date → keep the latest (prefer one with taskId set)
+ * - Blocks with the same title on the same date → keep one (prefer fixed blocks, then blocks with taskId)
  * - Non-task blocks (meals, breaks) at the exact same position → keep one
- * Does NOT dedup by title alone — legitimate same-title blocks are allowed
- * (e.g., two "Study" sessions at different times on the same day).
  */
 function deduplicateBlocks(blocks: TimeBlock[]): TimeBlock[] {
   const seenKeys = new Set<string>();
   const result: TimeBlock[] = [];
 
-  // Process in reverse so the LATEST added block wins (prefer blocks with taskId)
+  // Process in reverse so the LATEST added block wins.
+  // Sort priority: fixed blocks first, then blocks with taskId, then the rest.
   const sorted = [...blocks].sort((a, b) => {
+    if (a.isFixed && !b.isFixed) return 1;
+    if (!a.isFixed && b.isFixed) return -1;
     if (a.taskId && !b.taskId) return 1;
     if (!a.taskId && b.taskId) return -1;
     return 0;
@@ -108,16 +110,22 @@ function deduplicateBlocks(blocks: TimeBlock[]): TimeBlock[] {
     // Dedup by taskId + date (blocks for the same task on the same date)
     const taskIdKey = b.taskId ? `task:${b.taskId}:${b.date}` : null;
 
-    // Dedup non-task blocks by exact position (same title+date+startHour+type)
+    // Dedup by title + date regardless of type — prevents fixed event block
+    // and flexible task block with the same name from coexisting on the same date
     const titleKey = b.title.toLowerCase().trim();
+    const titleDateKey = `title:${titleKey}:${b.date}`;
+
+    // Dedup non-task blocks by exact position (same title+date+startHour+type)
     const posKey = b.type !== "task"
       ? `pos:${titleKey}:${b.date}:${b.startHour}:${b.type}`
       : null;
 
     if (taskIdKey && seenKeys.has(taskIdKey)) continue;
+    if (seenKeys.has(titleDateKey)) continue;
     if (posKey && seenKeys.has(posKey)) continue;
 
     if (taskIdKey) seenKeys.add(taskIdKey);
+    seenKeys.add(titleDateKey);
     if (posKey) seenKeys.add(posKey);
     result.push(b);
   }
@@ -262,10 +270,9 @@ export function executeToolCalls(
               (b) => b.taskId === ab.taskId && !claimedBlockIds.has(b.id)
             );
           }
-          if (!existing && aiType === "task") {
+          if (!existing) {
             existing = allBlocks.find(
               (b) =>
-                b.type === aiType &&
                 b.title.toLowerCase().trim() === aiTitle &&
                 !claimedBlockIds.has(b.id)
             );
@@ -435,9 +442,7 @@ export function executeToolCalls(
     // Check by BOTH taskId and title to avoid duplicates.
     const scheduledIds = new Set(allBlocks.filter((b) => b.taskId).map((b) => b.taskId));
     const scheduledTitles = new Set(
-      allBlocks
-        .filter((b) => b.type === "task")
-        .map((b) => b.title.toLowerCase().trim())
+      allBlocks.map((b) => b.title.toLowerCase().trim())
     );
     const unscheduled = createdTasks.filter(
       (t) => !scheduledIds.has(t.id) && !scheduledTitles.has(t.title.toLowerCase().trim())
