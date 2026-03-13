@@ -2,7 +2,7 @@ import { useState, useMemo, useRef, useCallback, useEffect, memo } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import { useDayFlow } from "@/context/DayFlowContext";
 import { CATEGORY_COLOR_MAP, CATEGORY_COLOR_BG_MAP, TimeBlock, Task } from "@/types/dayflow";
-import { ChevronLeft, ChevronRight, Check, ArrowRight, Pencil, GripVertical } from "lucide-react";
+import { ChevronLeft, ChevronRight, Check, CheckCircle, ArrowRight, Pencil, GripVertical } from "lucide-react";
 import { formatHour } from "@/lib/utils";
 import TaskDetailSheet from "@/components/dayflow/TaskDetailSheet";
 import BlockEditSheet from "@/components/dayflow/BlockEditSheet";
@@ -547,6 +547,18 @@ const ScheduleBlock = memo(function ScheduleBlock({
         {/* Action buttons — visible when block has enough width */}
         {showButtons && (
           <div className="flex items-center gap-0 shrink-0">
+            {block.type === "task" && onToggle && (
+              <button
+                aria-label={completed ? "Mark incomplete" : "Mark as done"}
+                onClick={(e) => {
+                  e.stopPropagation();
+                  onToggle();
+                }}
+                className="flex items-center justify-center rounded-lg p-1.5 opacity-60 active:bg-secondary/50 transition-opacity"
+              >
+                <CheckCircle className={`h-3.5 w-3.5 ${completed ? "text-primary" : "text-muted-foreground"}`} />
+              </button>
+            )}
             {onEdit && (
               <button
                 aria-label="Edit task"
