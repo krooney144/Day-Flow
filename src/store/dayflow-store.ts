@@ -364,6 +364,17 @@ export function useDayFlowStore() {
     }));
   }, [setState]);
 
+  const restoreTask = useCallback((id: string) => {
+    setState((s) => ({
+      ...s,
+      tasks: s.tasks.map((t) =>
+        t.id === id
+          ? { ...t, status: "active" as const, completedAt: undefined }
+          : t
+      ),
+    }));
+  }, [setState]);
+
   const deferTask = useCallback((id: string) => {
     setState((s) => {
       const tomorrow = new Date();
@@ -550,6 +561,7 @@ export function useDayFlowStore() {
     updateTask,
     toggleTaskComplete,
     dropTask,
+    restoreTask,
     deferTask,
     deleteTask,
     setTimeBlocks,

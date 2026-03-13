@@ -427,7 +427,9 @@ function ScheduleBlock({
 
   const displayHour = isDragging && dragPreviewHour !== null ? dragPreviewHour : block.startHour;
   const top = (displayHour - START_HOUR) * HOUR_HEIGHT;
-  const height = Math.max(block.durationHours * HOUR_HEIGHT - 2, 24);
+  const rawHeight = block.durationHours * HOUR_HEIGHT - 2;
+  const height = Math.max(rawHeight, 28);
+  const isCompact = rawHeight < 36; // 15-min blocks need compact layout
 
   // Overlap layout
   const widthPercent = 100 / totalColumns;
@@ -449,9 +451,9 @@ function ScheduleBlock({
 
   return (
     <div
-      className={`absolute rounded-xl p-2.5 transition-shadow touch-none ${bgClass} ${
-        completed ? "opacity-40" : ""
-      } ${isDragging ? "z-30 shadow-lg scale-[1.02]" : ""} ${
+      className={`absolute rounded-xl transition-shadow touch-none overflow-hidden ${bgClass} ${
+        isCompact ? "px-2 py-1" : "p-2.5"
+      } ${completed ? "opacity-40" : ""} ${isDragging ? "z-30 shadow-lg scale-[1.02]" : ""} ${
         block.isFixed ? "cursor-default" : "cursor-grab active:cursor-grabbing"
       }`}
       style={{
@@ -459,12 +461,13 @@ function ScheduleBlock({
         height,
         left: totalColumns > 1 ? leftCalc : 48,
         width: totalColumns > 1 ? widthCalc : "calc(100% - 48px)",
+        zIndex: isDragging ? 30 : Math.floor(displayHour * 4),
       }}
       onPointerDown={block.isFixed ? undefined : onPointerDown}
     >
-      <div className="flex items-start gap-2 h-full">
-        {/* Drag handle — larger touch target */}
-        {!block.isFixed && (
+      <div className={`flex items-center gap-1.5 h-full ${isCompact ? "" : "items-start gap-2"}`}>
+        {/* Drag handle */}
+        {!block.isFixed && !isCompact && (
           <div className="flex flex-col gap-0.5 opacity-30 mt-1 shrink-0 py-1 px-1 -ml-1">
             <div className="h-[2px] w-4 rounded bg-muted-foreground" />
             <div className="h-[2px] w-4 rounded bg-muted-foreground" />
@@ -480,55 +483,56 @@ function ScheduleBlock({
               e.stopPropagation();
               onToggle();
             }}
-            className={`flex h-5 w-5 mt-0.5 shrink-0 items-center justify-center rounded border-[1.5px] transition-all ${
-              completed ? "bg-primary border-primary" : "border-muted-foreground/40 bg-card/50"
-            }`}
+            className={`flex shrink-0 items-center justify-center rounded border-[1.5px] transition-all ${
+              isCompact ? "h-4 w-4" : "h-5 w-5 mt-0.5"
+            } ${completed ? "bg-primary border-primary" : "border-muted-foreground/40 bg-card/50"}`}
           >
-            {completed && <Check className="h-3 w-3 text-primary-foreground" />}
+            {completed && <Check className={isCompact ? "h-2.5 w-2.5 text-primary-foreground" : "h-3 w-3 text-primary-foreground"} />}
           </button>
         )}
-        {block.type !== "task" && <div className={`cat-dot mt-1.5 ${dotClass}`} />}
+        {block.type !== "task" && <div className={`cat-dot ${isCompact ? "" : "mt-1.5"} ${dotClass}`} />}
         <div className="flex-1 min-w-0">
-          <p className={`text-xs font-medium truncate ${completed ? "line-through text-muted-foreground" : "text-foreground"}`}>
+          <p className={`font-medium truncate ${isCompact ? "text-[11px]" : "text-xs"} ${completed ? "line-through text-muted-foreground" : "text-foreground"}`}>
             {typeIcon} {block.title}
           </p>
-          {height > 32 && (
+          {!isCompact && height > 36 && (
             <p className="text-meta text-[10px] text-muted-foreground mt-0.5">
               {formatHour(displayHour)} – {formatHour(displayHour + block.durationHours)}
             </p>
           )}
         </div>
 
-        {/* Action buttons */}
-        <div className="flex items-center gap-0.5 shrink-0">
-          {/* Edit button — shown for ALL blocks with a taskId, including fixed */}
-          {onEdit && (
-            <button
-              aria-label="Edit task"
-              onPointerDown={(e) => e.stopPropagation()}
-              onClick={(e) => {
-                e.stopPropagation();
-                onEdit();
-              }}
-              className="flex items-center justify-center rounded-lg p-1.5 opacity-50 hover:opacity-100 active:bg-secondary/50 transition-opacity"
-            >
-              <Pencil className="h-3.5 w-3.5 text-muted-foreground" />
-            </button>
-          )}
-          {onMoveToTomorrow && (
-            <button
-              aria-label="Move to tomorrow"
-              onPointerDown={(e) => e.stopPropagation()}
-              onClick={(e) => {
-                e.stopPropagation();
-                onMoveToTomorrow();
-              }}
-              className="flex items-center justify-center rounded-lg p-1.5 opacity-50 hover:opacity-100 active:bg-secondary/50 transition-opacity"
-            >
-              <ArrowRight className="h-3.5 w-3.5 text-muted-foreground" />
-            </button>
-          )}
-        </div>
+        {/* Action buttons — hide on compact blocks to save space */}
+        {!isCompact && (
+          <div className="flex items-center gap-0.5 shrink-0">
+            {onEdit && (
+              <button
+                aria-label="Edit task"
+                onPointerDown={(e) => e.stopPropagation()}
+                onClick={(e) => {
+                  e.stopPropagation();
+                  onEdit();
+                }}
+                className="flex items-center justify-center rounded-lg p-1.5 opacity-50 hover:opacity-100 active:bg-secondary/50 transition-opacity"
+              >
+                <Pencil className="h-3.5 w-3.5 text-muted-foreground" />
+              </button>
+            )}
+            {onMoveToTomorrow && (
+              <button
+                aria-label="Move to tomorrow"
+                onPointerDown={(e) => e.stopPropagation()}
+                onClick={(e) => {
+                  e.stopPropagation();
+                  onMoveToTomorrow();
+                }}
+                className="flex items-center justify-center rounded-lg p-1.5 opacity-50 hover:opacity-100 active:bg-secondary/50 transition-opacity"
+              >
+                <ArrowRight className="h-3.5 w-3.5 text-muted-foreground" />
+              </button>
+            )}
+          </div>
+        )}
       </div>
     </div>
   );

@@ -21,7 +21,7 @@ const TIME_OPTIONS: TimeOfDay[] = ["morning", "afternoon", "evening", "any"];
 const ENERGY_OPTIONS: EnergyLevel[] = ["low", "medium", "high"];
 
 export default function TaskDetailSheet({ task, onClose }: Props) {
-  const { getCategory, updateTask, dropTask, timeBlocks, preferences, customProjects, moveBlockToDate, updateTimeBlock, recurrenceRules, addRecurrenceRule, deleteRecurrenceRule } = useDayFlow();
+  const { getCategory, updateTask, dropTask, restoreTask, timeBlocks, preferences, customProjects, moveBlockToDate, updateTimeBlock, recurrenceRules, addRecurrenceRule, deleteRecurrenceRule } = useDayFlow();
 
   const [title, setTitle] = useState("");
   const [notes, setNotes] = useState("");
@@ -110,6 +110,11 @@ export default function TaskDetailSheet({ task, onClose }: Props) {
     onClose();
   };
 
+  const handleRestore = () => {
+    restoreTask(task.id);
+    toast.success("Task restored");
+  };
+
   return (
     <AnimatePresence>
       {task && (
@@ -151,12 +156,21 @@ export default function TaskDetailSheet({ task, onClose }: Props) {
                 />
               </div>
               <div className="flex items-center gap-1">
-                <button
-                  onClick={handleDrop}
-                  className="rounded-xl px-3 py-2 text-xs font-medium text-destructive active:bg-muted transition-colors"
-                >
-                  Drop
-                </button>
+                {task.status === "dropped" ? (
+                  <button
+                    onClick={handleRestore}
+                    className="rounded-xl px-3 py-2 text-xs font-medium text-primary active:bg-muted transition-colors"
+                  >
+                    Restore
+                  </button>
+                ) : (
+                  <button
+                    onClick={handleDrop}
+                    className="rounded-xl px-3 py-2 text-xs font-medium text-destructive active:bg-muted transition-colors"
+                  >
+                    Drop
+                  </button>
+                )}
                 <button aria-label="Close" onClick={onClose} className="tap-target flex items-center justify-center rounded-xl p-2 active:bg-secondary">
                   <X className="h-5 w-5 text-muted-foreground" />
                 </button>
