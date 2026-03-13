@@ -2,14 +2,14 @@ import { useState, useMemo } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import { useDayFlow } from "@/context/DayFlowContext";
 import { Task, CATEGORY_COLOR_MAP, CATEGORY_COLOR_BG_MAP, CATEGORY_TEXT_COLOR_MAP } from "@/types/dayflow";
-import { Plus, Check, CheckCircle2, ChevronDown, Pin } from "lucide-react";
+import { Plus, Check, CheckCircle2, ChevronDown, Pin, Trash2 } from "lucide-react";
 import { formatHour } from "@/lib/utils";
 import TaskDetailSheet from "@/components/dayflow/TaskDetailSheet";
 import QuickAddTask from "@/components/dayflow/QuickAddTask";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { useTaskScheduleSync } from "@/hooks/useTaskScheduleSync";
 
-type TabView = "active" | "fixed" | "completed";
+type TabView = "active" | "fixed" | "completed" | "dropped";
 type SortMode = "priority" | "category" | "manual";
 
 const SORT_LABELS: Record<SortMode, string> = {
@@ -46,8 +46,13 @@ export default function TasksPage() {
   }, [allTimeBlocks]);
 
   const filtered = useMemo(() => {
+    if (tabView === "dropped") {
+      let list = tasks.filter((t) => t.status === "dropped");
+      if (filterCat) list = list.filter((t) => t.categoryId === filterCat);
+      return list;
+    }
     if (tabView === "completed") {
-      let list = tasks.filter((t) => t.status === "completed" && t.status !== "dropped");
+      let list = tasks.filter((t) => t.status === "completed");
       if (filterCat) list = list.filter((t) => t.categoryId === filterCat);
       return list;
     }
@@ -64,7 +69,7 @@ export default function TasksPage() {
       return list;
     }
     // active tab
-    let list = tasks.filter((t) => t.status === "active" && t.status !== "dropped");
+    let list = tasks.filter((t) => t.status === "active");
     if (filterCat) list = list.filter((t) => t.categoryId === filterCat);
     if (sortBy === "priority") {
       list.sort((a, b) => a.priority - b.priority);
@@ -75,6 +80,7 @@ export default function TasksPage() {
   }, [tasks, filterCat, sortBy, tabView, fixedTaskIds, allTimeBlocks]);
 
   const completedCount = useMemo(() => tasks.filter(t => t.status === "completed").length, [tasks]);
+  const droppedCount = useMemo(() => tasks.filter(t => t.status === "dropped").length, [tasks]);
 
   return (
     <div className="flex flex-col h-full">
@@ -133,6 +139,17 @@ export default function TasksPage() {
             <CheckCircle2 className="h-3 w-3" />
             Done{completedCount > 0 && ` (${completedCount})`}
           </button>
+          {droppedCount > 0 && (
+            <button
+              onClick={() => setTabView("dropped")}
+              className={`flex-1 rounded-lg py-1.5 text-xs font-medium transition-all flex items-center justify-center gap-1.5 ${
+                tabView === "dropped" ? "bg-card text-foreground shadow-sm" : "text-muted-foreground"
+              }`}
+            >
+              <Trash2 className="h-3 w-3" />
+              Dropped ({droppedCount})
+            </button>
+          )}
         </div>
 
         {/* Category filter pills — color-coded */}
@@ -185,10 +202,10 @@ export default function TasksPage() {
         {filtered.length === 0 && (
           <div className="flex flex-col items-center justify-center py-16">
             <p className="text-sm text-muted-foreground">
-              {tabView === "completed" ? "No completed tasks yet" : tabView === "fixed" ? "No fixed tasks in the next 2 weeks" : "No tasks yet"}
+              {tabView === "completed" ? "No completed tasks yet" : tabView === "fixed" ? "No fixed tasks in the next 2 weeks" : tabView === "dropped" ? "No dropped tasks" : "No tasks yet"}
             </p>
             <p className="text-xs text-muted-foreground mt-1">
-              {tabView === "active" ? "Tap + to add one, or use the Planner" : tabView === "fixed" ? "Meetings and pinned events show here" : "Complete tasks to see them here"}
+              {tabView === "active" ? "Tap + to add one, or use the Planner" : tabView === "fixed" ? "Meetings and pinned events show here" : tabView === "dropped" ? "Dropped tasks can be restored by tapping on them" : "Complete tasks to see them here"}
             </p>
           </div>
         )}

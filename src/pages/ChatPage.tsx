@@ -54,7 +54,7 @@ export default function ChatPage() {
       // Execute any tool calls
       let actionSummary = "";
       if (response.toolCalls.length > 0) {
-        const summaries = executeToolCalls(response.toolCalls, store, timeBlocks);
+        const summaries = executeToolCalls(response.toolCalls, store, timeBlocks, tasks);
         if (summaries.length > 0) {
           actionSummary = "\n\n---\n✓ " + summaries.join(" · ");
         }

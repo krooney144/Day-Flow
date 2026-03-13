@@ -99,7 +99,8 @@ export function executeToolCalls(
     moveBlockToDate: (blockId: string, newDate: string) => void;
     preferences?: UserPreferences;
   },
-  existingTimeBlocks: TimeBlock[] = []
+  existingTimeBlocks: TimeBlock[] = [],
+  existingTasks: Task[] = []
 ): string[] {
   const summaries: string[] = [];
   const now = new Date();
@@ -115,27 +116,43 @@ export function executeToolCalls(
   for (const tc of toolCalls) {
     switch (tc.name) {
       case "create_tasks": {
-        const tasks: Task[] = tc.arguments.tasks.map((t: any, i: number) => ({
-          id: `t-${Date.now()}-${i}`,
-          title: t.title,
-          categoryId: t.categoryId || "life-admin",
-          project: t.project || undefined,
-          status: "active" as const,
-          priority: t.priority || 3,
-          estimatedMinutes: t.estimatedMinutes || 30,
-          canSplit: (t.estimatedMinutes || 30) > 60,
-          notes: t.notes || "",
-          preferredTime: t.preferredTime || "any",
-          energyNeeded: (t.priority || 3) <= 2 ? ("high" as const) : ("medium" as const),
-          recurring: false,
-          createdAt: today,
-          rolloverCount: 0,
-          horizon: t.horizon || "today",
-          deadline: t.deadline || undefined,
-        }));
-        store.addTasks(tasks);
+        // Build set of existing active task titles for dedup
+        const existingTitles = new Set(
+          existingTasks
+            .filter((t) => t.status === "active")
+            .map((t) => t.title.toLowerCase().trim())
+        );
+
+        const tasks: Task[] = tc.arguments.tasks
+          .filter((t: any) => !existingTitles.has(t.title.toLowerCase().trim()))
+          .map((t: any, i: number) => ({
+            id: `t-${Date.now()}-${i}`,
+            title: t.title,
+            categoryId: t.categoryId || "life-admin",
+            project: t.project || undefined,
+            status: "active" as const,
+            priority: t.priority || 3,
+            estimatedMinutes: t.estimatedMinutes || 30,
+            canSplit: (t.estimatedMinutes || 30) > 60,
+            notes: t.notes || "",
+            preferredTime: t.preferredTime || "any",
+            energyNeeded: (t.priority || 3) <= 2 ? ("high" as const) : ("medium" as const),
+            recurring: false,
+            createdAt: today,
+            rolloverCount: 0,
+            horizon: t.horizon || "today",
+            deadline: t.deadline || undefined,
+          }));
+        const skippedCount = tc.arguments.tasks.length - tasks.length;
+        if (tasks.length > 0) {
+          store.addTasks(tasks);
+        }
         createdTasks = tasks;
-        summaries.push(`Added ${tasks.length} task${tasks.length > 1 ? "s" : ""}`);
+        let summary = `Added ${tasks.length} task${tasks.length !== 1 ? "s" : ""}`;
+        if (skippedCount > 0) {
+          summary += ` (${skippedCount} duplicate${skippedCount !== 1 ? "s" : ""} skipped)`;
+        }
+        summaries.push(summary);
         break;
       }
       case "update_task": {
