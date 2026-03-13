@@ -427,6 +427,14 @@ function formatBlockDate(dateStr: string): string {
   return d.toLocaleDateString("en-US", { weekday: "short", month: "numeric", day: "numeric", year: "2-digit" });
 }
 
+/**
+ * ScheduledTimeSection — time picker with deferred overlap resolution.
+ *
+ * Time adjustments are made in local state (no overlap check per increment).
+ * Overlap resolution only happens when the user taps "Apply" or moves to
+ * a different date. This prevents cascading block displacement when the
+ * user is just scrolling through times.
+ */
 function ScheduledTimeSection({
   block,
   onUpdateTime,
@@ -436,20 +444,48 @@ function ScheduledTimeSection({
   onUpdateTime: (startHour: number) => void;
   onMoveToDate: (dateStr: string) => void;
 }) {
-  const [showDatePicker, setShowDatePicker] = useState(false);
+  // Local time state — changes here don't trigger overlap resolution
+  const [localHour, setLocalHour] = useState(block.startHour);
+  const [isDirty, setIsDirty] = useState(false);
+
+  // Sync local state when block changes externally (e.g., date move resolved overlaps)
+  useEffect(() => {
+    setLocalHour(block.startHour);
+    setIsDirty(false);
+  }, [block.startHour, block.date]);
+
   const todayStr = new Date().toISOString().split("T")[0];
   const isToday = block.date === todayStr;
 
   const adjustTime = (delta: number) => {
-    const newHour = Math.max(0, Math.min(23.75, block.startHour + delta));
-    onUpdateTime(newHour);
+    const newHour = Math.max(0, Math.min(23.75, localHour + delta));
+    setLocalHour(Math.round(newHour * 4) / 4);
+    setIsDirty(true);
+  };
+
+  const applyTime = () => {
+    if (isDirty) {
+      onUpdateTime(localHour);
+      setIsDirty(false);
+    }
   };
 
   const moveByDays = (days: number) => {
+    // Apply pending time change before moving date
+    if (isDirty) {
+      onUpdateTime(localHour);
+      setIsDirty(false);
+    }
     const d = new Date(block.date + "T12:00:00");
     d.setDate(d.getDate() + days);
     onMoveToDate(d.toISOString().split("T")[0]);
   };
+
+  // Generate time options for the scroll picker (every 15 min, 6am-11pm)
+  const timeOptions: number[] = [];
+  for (let h = 6; h <= 23; h += 0.25) {
+    timeOptions.push(h);
+  }
 
   return (
     <div className="rounded-xl bg-primary/10 p-3 space-y-2.5">
@@ -462,32 +498,57 @@ function ScheduledTimeSection({
         </span>
       </div>
 
-      {/* Time editor */}
+      {/* Time picker — scroll-style with +/- and Apply */}
       <div className="flex items-center gap-2">
         <button
           onClick={() => adjustTime(-0.25)}
-          className="flex h-7 w-7 items-center justify-center rounded-lg bg-secondary text-foreground active:bg-muted transition-colors"
+          className="flex h-8 w-8 items-center justify-center rounded-lg bg-secondary text-foreground active:bg-muted transition-colors"
         >
           <Minus className="h-3.5 w-3.5" />
         </button>
-        <div className="flex-1 text-center">
-          <p className="text-sm text-foreground font-medium">
-            {formatHour(block.startHour)} – {formatHour(block.startHour + block.durationHours)}
-          </p>
+        <div className="flex-1">
+          {/* Scrollable time selector */}
+          <select
+            value={localHour}
+            onChange={(e) => {
+              setLocalHour(parseFloat(e.target.value));
+              setIsDirty(true);
+            }}
+            className="w-full rounded-lg bg-secondary px-3 py-1.5 text-sm font-medium text-foreground text-center appearance-none cursor-pointer focus:ring-1 focus:ring-primary/30 outline-none"
+          >
+            {timeOptions.map((h) => (
+              <option key={h} value={h}>
+                {formatHour(h)} – {formatHour(h + block.durationHours)}
+              </option>
+            ))}
+          </select>
         </div>
         <button
           onClick={() => adjustTime(0.25)}
-          className="flex h-7 w-7 items-center justify-center rounded-lg bg-secondary text-foreground active:bg-muted transition-colors"
+          className="flex h-8 w-8 items-center justify-center rounded-lg bg-secondary text-foreground active:bg-muted transition-colors"
         >
           <Plus className="h-3.5 w-3.5" />
         </button>
       </div>
 
+      {/* Apply button — only shown when time is dirty */}
+      {isDirty && (
+        <button
+          onClick={applyTime}
+          className="w-full rounded-lg bg-primary py-1.5 text-xs font-medium text-primary-foreground active:opacity-90 transition-opacity"
+        >
+          Apply time change
+        </button>
+      )}
+
       {/* Move buttons */}
       <div className="flex gap-1.5">
         {!isToday && (
           <button
-            onClick={() => onMoveToDate(todayStr)}
+            onClick={() => {
+              if (isDirty) { onUpdateTime(localHour); setIsDirty(false); }
+              onMoveToDate(todayStr);
+            }}
             className="flex items-center gap-1 rounded-lg bg-secondary px-2.5 py-1.5 text-xs font-medium text-muted-foreground active:bg-border transition-colors"
           >
             <ArrowLeft className="h-3 w-3" /> Today
@@ -517,6 +578,7 @@ function ScheduledTimeSection({
               selected={new Date(block.date + "T12:00:00")}
               onSelect={(d) => {
                 if (d) {
+                  if (isDirty) { onUpdateTime(localHour); setIsDirty(false); }
                   onMoveToDate(d.toISOString().split("T")[0]);
                 }
               }}

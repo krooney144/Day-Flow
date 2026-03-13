@@ -33,13 +33,8 @@ export default function RolloverModal() {
         }
         break;
       case "defer":
-        // Increment rollover and move block to today
+        // Increment rollover and move blocks to tomorrow (handled by deferTask)
         deferTask(taskId);
-        for (const b of timeBlocks) {
-          if (b.taskId === taskId && b.date < today) {
-            moveBlockToDate(b.id, today);
-          }
-        }
         break;
       case "drop":
         updateTask(taskId, { status: "dropped" });

@@ -9,6 +9,7 @@ import BlockEditSheet from "@/components/dayflow/BlockEditSheet";
 import QuickAddTask from "@/components/dayflow/QuickAddTask";
 import ScheduleChatFab from "@/components/dayflow/ScheduleChatFab";
 import { useMealBlocks } from "@/hooks/useMealBlocks";
+import { USER_MAX_OVERLAP } from "@/lib/scheduling-utils";
 
 const HOUR_HEIGHT = 68; // px per hour
 const START_HOUR = 0;
@@ -224,7 +225,7 @@ function DayView({ dateStr, onEditTask, onEditBlock, onSwipePrev, onSwipeNext }:
   onSwipePrev: () => void;
   onSwipeNext: () => void;
 }) {
-  const { getBlocksForDate, getCategory, toggleTaskComplete, tasks, updateTimeBlock, moveBlockToDate, displaceBlock } = useDayFlow();
+  const { getBlocksForDate, getCategory, toggleTaskComplete, tasks, updateTimeBlock, moveBlockToDate } = useDayFlow();
   const blocks = getBlocksForDate(dateStr);
   const now = new Date();
   const currentHour = now.getHours() + now.getMinutes() / 60;
@@ -332,8 +333,8 @@ function DayView({ dateStr, onEditTask, onEditBlock, onSwipePrev, onSwipeNext }:
         const block = blocks.find(b => b.id === blockId);
         if (block) {
           const clamped = Math.max(START_HOUR, Math.min(END_HOUR - block.durationHours, h));
-          updateTimeBlock(blockId, { startHour: clamped });
-          displaceBlock(blockId);
+          // User drag-drop allows up to 2 blocks at the same time (intentional stacking)
+          updateTimeBlock(blockId, { startHour: clamped }, USER_MAX_OVERLAP);
         }
       }
       setDraggingId(null);
@@ -344,7 +345,7 @@ function DayView({ dateStr, onEditTask, onEditBlock, onSwipePrev, onSwipeNext }:
     window.addEventListener("pointermove", onMove);
     window.addEventListener("pointerup", onUp);
     cleanupRef.current = cleanup;
-  }, [blocks, getHourFromPointer, updateTimeBlock, displaceBlock]);
+  }, [blocks, getHourFromPointer, updateTimeBlock]);
 
   return (
     <div
