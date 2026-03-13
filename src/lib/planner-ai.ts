@@ -115,6 +115,10 @@ function deduplicateBlocks(blocks: TimeBlock[]): TimeBlock[] {
     const titleKey = b.title.toLowerCase().trim();
     const titleDateKey = `title:${titleKey}:${b.date}`;
 
+    // Also dedup by normalized title + date to catch LLM rephrasing
+    const normalizedKey = normalizeTitle(b.title);
+    const normalizedDateKey = normalizedKey ? `ntitle:${normalizedKey}:${b.date}` : null;
+
     // Dedup non-task blocks by exact position (same title+date+startHour+type)
     const posKey = b.type !== "task"
       ? `pos:${titleKey}:${b.date}:${b.startHour}:${b.type}`
@@ -122,15 +126,35 @@ function deduplicateBlocks(blocks: TimeBlock[]): TimeBlock[] {
 
     if (taskIdKey && seenKeys.has(taskIdKey)) continue;
     if (seenKeys.has(titleDateKey)) continue;
+    if (normalizedDateKey && seenKeys.has(normalizedDateKey)) continue;
     if (posKey && seenKeys.has(posKey)) continue;
 
     if (taskIdKey) seenKeys.add(taskIdKey);
     seenKeys.add(titleDateKey);
+    if (normalizedDateKey) seenKeys.add(normalizedDateKey);
     if (posKey) seenKeys.add(posKey);
     result.push(b);
   }
 
   return result.reverse();
+}
+
+/**
+ * Normalize a title for matching: lowercase, strip parenthetical suffixes,
+ * normalize "&" to "and", collapse whitespace, strip trailing punctuation.
+ * Handles the common ways GPT-4o rephrases titles across tool calls.
+ */
+function normalizeTitle(raw: string): string {
+  let t = raw.toLowerCase().trim();
+  // Strip parenthetical suffixes like "(30 min)", "(1 hr)", "(task)"
+  t = t.replace(/\s*\([^)]*\)\s*$/, "");
+  // Normalize "&" to "and"
+  t = t.replace(/\s*&\s*/g, " and ");
+  // Collapse multiple spaces
+  t = t.replace(/\s+/g, " ");
+  // Strip trailing punctuation
+  t = t.replace(/[.,;:!?]+$/, "");
+  return t.trim();
 }
 
 export function executeToolCalls(
@@ -147,6 +171,7 @@ export function executeToolCalls(
     updatePreferences: (prefs: Partial<UserPreferences>) => void;
     addProject: (categoryId: string, projectName: string) => void;
     moveBlockToDate: (blockId: string, newDate: string) => void;
+    setAIScheduledTaskIds?: (ids: string[]) => void;
     preferences?: UserPreferences;
   },
   existingTimeBlocks: TimeBlock[] = [],
@@ -257,13 +282,14 @@ export function executeToolCalls(
         for (let i = 0; i < aiBlocks.length; i++) {
           const ab = aiBlocks[i];
           const aiTitle = (ab.title || "").toLowerCase().trim();
+          const aiTitleNormalized = normalizeTitle(ab.title || "");
           const aiType = ab.type || "task";
           const clampedStart = targetDate === today
             ? Math.max(ab.startHour, Math.ceil(currentHour * 4) / 4)
             : ab.startHour;
 
           // Search ALL days for an existing block matching this AI block
-          // Priority: match by taskId first, then fall back to title+type
+          // Priority: match by taskId first, then exact title, then normalized title
           let existing: TimeBlock | undefined;
           if (ab.taskId) {
             existing = allBlocks.find(
@@ -274,6 +300,14 @@ export function executeToolCalls(
             existing = allBlocks.find(
               (b) =>
                 b.title.toLowerCase().trim() === aiTitle &&
+                !claimedBlockIds.has(b.id)
+            );
+          }
+          if (!existing) {
+            existing = allBlocks.find(
+              (b) =>
+                normalizeTitle(b.title) === aiTitleNormalized &&
+                aiTitleNormalized.length > 0 &&
                 !claimedBlockIds.has(b.id)
             );
           }
@@ -396,12 +430,14 @@ export function executeToolCalls(
 
           // Skip if a block with the same task/title already exists on target date
           // (generate_schedule may have already created it there)
+          const blockNormalized = normalizeTitle(block.title);
           const alreadyOnTarget = allBlocks.some((b) =>
             b.date === move.targetDate &&
             b.id !== block.id &&
             (
               (b.taskId && b.taskId === block.taskId) ||
-              (b.title.toLowerCase().trim() === block.title.toLowerCase().trim() && b.type === block.type)
+              (b.title.toLowerCase().trim() === block.title.toLowerCase().trim() && b.type === block.type) ||
+              (blockNormalized.length > 0 && normalizeTitle(b.title) === blockNormalized && b.type === block.type)
             )
           );
           if (alreadyOnTarget) continue;
@@ -419,15 +455,22 @@ export function executeToolCalls(
 
   // Reconcile task IDs: if AI called both create_tasks and generate_schedule,
   // the schedule blocks may reference AI-invented IDs or have undefined taskId.
-  // Match ALL blocks to created tasks by title, not just those with existing taskId.
+  // Match blocks to created tasks using normalized titles to handle LLM rephrasing
+  // (e.g. "and" vs "&", added parentheticals like "(30 min)").
   if (createdTasks.length > 0 && hasScheduleCall) {
-    const titleToTask = new Map<string, Task>();
+    // Build lookup maps: exact title → task, normalized title → task
+    const exactTitleToTask = new Map<string, Task>();
+    const normalizedTitleToTask = new Map<string, Task>();
     for (const task of createdTasks) {
-      titleToTask.set(task.title.toLowerCase().trim(), task);
+      exactTitleToTask.set(task.title.toLowerCase().trim(), task);
+      normalizedTitleToTask.set(normalizeTitle(task.title), task);
     }
 
     for (const block of allBlocks) {
-      const matchedTask = titleToTask.get(block.title.toLowerCase().trim());
+      // Try exact match first, then normalized match
+      const matchedTask =
+        exactTitleToTask.get(block.title.toLowerCase().trim()) ||
+        normalizedTitleToTask.get(normalizeTitle(block.title));
       if (!matchedTask) continue;
 
       // Block already has the correct real taskId — skip
@@ -438,44 +481,15 @@ export function executeToolCalls(
       block.categoryId = matchedTask.categoryId;
     }
 
-    // Find created tasks missing a schedule block, auto-schedule them across multiple days.
-    // Check by BOTH taskId and title to avoid duplicates.
-    const scheduledIds = new Set(allBlocks.filter((b) => b.taskId).map((b) => b.taskId));
-    const scheduledTitles = new Set(
-      allBlocks.map((b) => b.title.toLowerCase().trim())
-    );
-    const unscheduled = createdTasks.filter(
-      (t) => !scheduledIds.has(t.id) && !scheduledTitles.has(t.title.toLowerCase().trim())
-    );
-    const prefs = store.preferences || {};
-    let dayIndex = 0;
-    for (const task of unscheduled) {
-      if (task.horizon === "backlog") continue;
-      const targetDate = getAutoScheduleDateForHorizon(task.horizon, prefs, dayIndex);
-      const isToday = targetDate === today;
-      const minHour = isToday ? currentHour : undefined;
-      const durationHours = (task.estimatedMinutes || 30) / 60;
-      const catWindow = store.preferences?.categories?.find((c) => c.id === task.categoryId)?.schedulingWindow;
-      const startHour = findNextAvailableSlot(
-        allBlocks,
-        durationHours,
-        task.preferredTime,
-        targetDate,
-        minHour,
-        catWindow
-      );
-      allBlocks.push({
-        id: `b-auto-${task.id}`,
-        taskId: task.id,
-        title: task.title,
-        categoryId: task.categoryId,
-        date: targetDate,
-        startHour,
-        durationHours,
-        isFixed: false,
-        type: "task",
-      });
-      dayIndex++;
+    // Trust the AI's generate_schedule decisions. Do NOT auto-schedule tasks
+    // that weren't matched — the AI made deliberate choices about placement.
+    // Title mismatches between create_tasks and generate_schedule would cause
+    // false "unscheduled" detection, creating duplicate blocks on today.
+    // The useTaskScheduleSync hook handles truly orphaned tasks as a safety net.
+
+    // Mark all created tasks as AI-scheduled so the sync hook skips them
+    if (store.setAIScheduledTaskIds) {
+      store.setAIScheduledTaskIds(createdTasks.map((t) => t.id));
     }
     blocksChanged = true;
   }

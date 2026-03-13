@@ -4,12 +4,29 @@ import { findNextAvailableSlot } from "@/lib/scheduling-utils";
 import { TimeBlock } from "@/types/dayflow";
 
 /**
+ * Normalize a title for matching — mirrors the normalizeTitle in planner-ai.ts.
+ * Handles "&" vs "and", parenthetical suffixes, whitespace, punctuation.
+ */
+function normalizeTitle(raw: string): string {
+  let t = raw.toLowerCase().trim();
+  t = t.replace(/\s*\([^)]*\)\s*$/, "");
+  t = t.replace(/\s*&\s*/g, " and ");
+  t = t.replace(/\s+/g, " ");
+  t = t.replace(/[.,;:!?]+$/, "");
+  return t.trim();
+}
+
+/**
  * Failsafe: on mount, find any active tasks with horizon "today" or "soon"
  * missing a schedule block and auto-create blocks for them.
  * Spreads tasks across appropriate days based on horizon.
+ *
+ * Skips tasks that were part of an AI bulk schedule (tracked via
+ * aiScheduledTaskIds) to avoid creating duplicates when the AI used
+ * slightly different titles in create_tasks vs generate_schedule.
  */
 export function useTaskScheduleSync() {
-  const { tasks, timeBlocks, addTimeBlocks, preferences } = useDayFlow();
+  const { tasks, timeBlocks, addTimeBlocks, preferences, getAIScheduledTaskIds } = useDayFlow();
 
   useEffect(() => {
     const now = new Date();
@@ -17,6 +34,9 @@ export function useTaskScheduleSync() {
     const currentHour = now.getHours() + now.getMinutes() / 60;
     const workEnd = preferences.workEndHour ?? 18;
     const isPastWorkHours = currentHour >= workEnd;
+
+    // Get task IDs that the AI already scheduled — don't second-guess those
+    const aiScheduledIds = getAIScheduledTaskIds();
 
     const activeTasks = tasks.filter(
       (t) => t.status === "active" && t.horizon !== "backlog"
@@ -27,13 +47,24 @@ export function useTaskScheduleSync() {
     // Also track scheduled titles to catch blocks where AI omitted taskId
     // Include ALL block types (task, event, meal, etc.) to prevent duplicates
     // when a task has a corresponding fixed event block
-    const scheduledTitles = new Set(
+    const scheduledTitlesExact = new Set(
       timeBlocks.map((b) => b.title.toLowerCase().trim())
     );
-
-    const orphaned = activeTasks.filter(
-      (t) => !scheduledTaskIds.has(t.id) && !scheduledTitles.has(t.title.toLowerCase().trim())
+    const scheduledTitlesNormalized = new Set(
+      timeBlocks.map((b) => normalizeTitle(b.title))
     );
+
+    const orphaned = activeTasks.filter((t) => {
+      // Already linked by taskId
+      if (scheduledTaskIds.has(t.id)) return false;
+      // Exact title match with an existing block
+      if (scheduledTitlesExact.has(t.title.toLowerCase().trim())) return false;
+      // Normalized title match (catches "&" vs "and", parentheticals, etc.)
+      if (scheduledTitlesNormalized.has(normalizeTitle(t.title))) return false;
+      // AI already made scheduling decisions for this task — trust it
+      if (aiScheduledIds.has(t.id)) return false;
+      return true;
+    });
     if (orphaned.length === 0) return;
 
     // Build list of schedulable dates
@@ -92,5 +123,5 @@ export function useTaskScheduleSync() {
     }
 
     addTimeBlocks(newBlocks);
-  }, [tasks, timeBlocks, addTimeBlocks, preferences]);
+  }, [tasks, timeBlocks, addTimeBlocks, preferences, getAIScheduledTaskIds]);
 }
