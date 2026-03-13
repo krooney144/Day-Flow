@@ -1,15 +1,15 @@
-import { useState, useMemo, useRef, useCallback, useEffect } from "react";
+import { useState, useMemo, useRef, useCallback, useEffect, memo } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import { useDayFlow } from "@/context/DayFlowContext";
 import { CATEGORY_COLOR_MAP, CATEGORY_COLOR_BG_MAP, TimeBlock, Task } from "@/types/dayflow";
-import { ChevronLeft, ChevronRight, Check, ArrowRight, Pencil } from "lucide-react";
+import { ChevronLeft, ChevronRight, Check, ArrowRight, Pencil, GripVertical } from "lucide-react";
 import { formatHour } from "@/lib/utils";
 import TaskDetailSheet from "@/components/dayflow/TaskDetailSheet";
 import QuickAddTask from "@/components/dayflow/QuickAddTask";
 import ScheduleChatFab from "@/components/dayflow/ScheduleChatFab";
 import { useMealBlocks } from "@/hooks/useMealBlocks";
 
-const HOUR_HEIGHT = 64; // px per hour
+const HOUR_HEIGHT = 68; // px per hour
 const START_HOUR = 0;
 const END_HOUR = 24;
 const SNAP_MINUTES = 15;
@@ -278,10 +278,12 @@ function DayView({ dateStr, onEditTask, onSwipePrev, onSwipeNext }: {
   }, [onSwipePrev, onSwipeNext]);
 
   const DRAG_THRESHOLD = 8; // px — must move this far before drag starts
+  const rafRef = useRef<number | null>(null);
 
-  const handlePointerDown = useCallback((blockId: string, e: React.PointerEvent) => {
+  const handleDragHandlePointerDown = useCallback((blockId: string, e: React.PointerEvent) => {
     if (blocks.find(b => b.id === blockId)?.isFixed) return;
     e.preventDefault();
+    e.stopPropagation();
     const startY = e.clientY;
     let dragStarted = false;
 
@@ -292,18 +294,23 @@ function DayView({ dateStr, onEditTask, onSwipePrev, onSwipeNext }: {
         setDragPreviewHour(getHourFromPointer(startY));
       }
       if (dragStarted) {
-        const h = getHourFromPointer(ev.clientY);
-        const block = blocks.find(b => b.id === blockId);
-        if (block) {
-          const clamped = Math.max(START_HOUR, Math.min(END_HOUR - block.durationHours, h));
-          setDragPreviewHour(clamped);
-        }
+        // Throttle updates to animation frames
+        if (rafRef.current) cancelAnimationFrame(rafRef.current);
+        rafRef.current = requestAnimationFrame(() => {
+          const h = getHourFromPointer(ev.clientY);
+          const block = blocks.find(b => b.id === blockId);
+          if (block) {
+            const clamped = Math.max(START_HOUR, Math.min(END_HOUR - block.durationHours, h));
+            setDragPreviewHour(clamped);
+          }
+        });
       }
     };
 
     const cleanup = () => {
       window.removeEventListener("pointermove", onMove);
       window.removeEventListener("pointerup", onUp);
+      if (rafRef.current) cancelAnimationFrame(rafRef.current);
       cleanupRef.current = null;
     };
 
@@ -403,7 +410,7 @@ function DayView({ dateStr, onEditTask, onSwipePrev, onSwipeNext }: {
             onToggle={block.taskId ? () => toggleTaskComplete(block.taskId!) : undefined}
             isDragging={draggingId === block.id}
             dragPreviewHour={draggingId === block.id ? dragPreviewHour : null}
-            onPointerDown={(e) => handlePointerDown(block.id, e)}
+            onDragHandlePointerDown={(e) => handleDragHandlePointerDown(block.id, e)}
             onMoveToTomorrow={!block.isFixed ? () => {
               const tomorrow = new Date();
               tomorrow.setDate(tomorrow.getDate() + 1);
@@ -417,7 +424,7 @@ function DayView({ dateStr, onEditTask, onSwipePrev, onSwipeNext }: {
   );
 }
 
-function ScheduleBlock({
+const ScheduleBlock = memo(function ScheduleBlock({
   block,
   column,
   totalColumns,
@@ -425,7 +432,7 @@ function ScheduleBlock({
   onToggle,
   isDragging,
   dragPreviewHour,
-  onPointerDown,
+  onDragHandlePointerDown,
   onMoveToTomorrow,
   onEdit,
 }: {
@@ -436,7 +443,7 @@ function ScheduleBlock({
   onToggle?: () => void;
   isDragging: boolean;
   dragPreviewHour: number | null;
-  onPointerDown: (e: React.PointerEvent) => void;
+  onDragHandlePointerDown: (e: React.PointerEvent) => void;
   onMoveToTomorrow?: () => void;
   onEdit?: () => void;
 }) {
@@ -447,8 +454,8 @@ function ScheduleBlock({
   const displayHour = isDragging && dragPreviewHour !== null ? dragPreviewHour : block.startHour;
   const top = (displayHour - START_HOUR) * HOUR_HEIGHT;
   const rawHeight = block.durationHours * HOUR_HEIGHT - 2;
-  const height = Math.max(rawHeight, 28);
-  const isCompact = rawHeight < 36; // 15-min blocks need compact layout
+  const height = Math.max(rawHeight, 36); // min 36px so buttons always fit
+  const isCompact = rawHeight < 44; // compact styling for short blocks
 
   // Overlap layout
   const widthPercent = 100 / totalColumns;
@@ -470,11 +477,9 @@ function ScheduleBlock({
 
   return (
     <div
-      className={`absolute rounded-xl transition-shadow touch-none overflow-hidden ${bgClass} ${
-        isCompact ? "px-2 py-1" : "p-2.5"
-      } ${completed ? "opacity-40" : ""} ${isDragging ? "z-30 shadow-lg scale-[1.02]" : ""} ${
-        block.isFixed ? "cursor-default" : "cursor-grab active:cursor-grabbing"
-      }`}
+      className={`absolute rounded-xl transition-shadow overflow-hidden ${bgClass} ${
+        isCompact ? "px-1.5 py-1" : "p-2.5"
+      } ${completed ? "opacity-40" : ""} ${isDragging ? "z-30 shadow-lg scale-[1.02]" : ""}`}
       style={{
         top,
         height,
@@ -482,56 +487,51 @@ function ScheduleBlock({
         width: totalColumns > 1 ? widthCalc : "calc(100% - 48px)",
         zIndex: isDragging ? 30 : Math.floor(displayHour * 4),
       }}
-      onPointerDown={block.isFixed ? undefined : onPointerDown}
     >
-      <div className={`flex items-center gap-1.5 h-full ${isCompact ? "" : "items-start gap-2"}`}>
-        {/* Drag handle */}
-        {!block.isFixed && !isCompact && (
-          <div className="flex flex-col gap-0.5 opacity-30 mt-1 shrink-0 py-1 px-1 -ml-1">
-            <div className="h-[2px] w-4 rounded bg-muted-foreground" />
-            <div className="h-[2px] w-4 rounded bg-muted-foreground" />
-            <div className="h-[2px] w-4 rounded bg-muted-foreground" />
-          </div>
+      <div className={`flex items-center gap-1 h-full ${isCompact ? "" : "items-start gap-1.5"}`}>
+        {/* Drag handle — only drag target, uses touch-none to prevent scroll */}
+        {!block.isFixed && (
+          <button
+            aria-label="Drag to reschedule"
+            className="touch-none shrink-0 flex flex-col items-center justify-center opacity-40 active:opacity-70 cursor-grab active:cursor-grabbing rounded p-1 -ml-0.5"
+            onPointerDown={onDragHandlePointerDown}
+          >
+            <GripVertical className="h-3.5 w-3.5 text-muted-foreground" />
+          </button>
         )}
 
         {block.type === "task" && onToggle && (
           <button
             aria-label={completed ? `Mark "${block.title}" incomplete` : `Complete "${block.title}"`}
-            onPointerDown={(e) => e.stopPropagation()}
-            onPointerUp={(e) => {
-              e.stopPropagation();
-              onToggle();
-            }}
-            className={`flex shrink-0 items-center justify-center rounded border-[1.5px] transition-all ${
-              isCompact ? "h-4 w-4" : "h-5 w-5 mt-0.5"
-            } ${completed ? "bg-primary border-primary" : "border-muted-foreground/40 bg-card/50"}`}
+            className={`flex shrink-0 items-center justify-center rounded border-[1.5px] transition-all h-5 w-5 ${
+              completed ? "bg-primary border-primary" : "border-muted-foreground/40 bg-card/50"
+            }`}
           >
-            {completed && <Check className={isCompact ? "h-2.5 w-2.5 text-primary-foreground" : "h-3 w-3 text-primary-foreground"} />}
+            {completed && <Check className="h-3 w-3 text-primary-foreground" />}
           </button>
         )}
-        {block.type !== "task" && <div className={`cat-dot ${isCompact ? "" : "mt-1.5"} ${dotClass}`} />}
-        <div className="flex-1 min-w-0">
+        {block.type !== "task" && <div className={`cat-dot ${dotClass}`} />}
+        <div className="flex-1 min-w-0" onClick={onToggle}>
           <p className={`font-medium truncate ${isCompact ? "text-[11px]" : "text-xs"} ${completed ? "line-through text-muted-foreground" : "text-foreground"}`}>
             {typeIcon} {block.title}
           </p>
-          {!isCompact && height > 36 && (
+          {!isCompact && height > 44 && (
             <p className="text-meta text-[10px] text-muted-foreground mt-0.5">
               {formatHour(displayHour)} – {formatHour(displayHour + block.durationHours)}
             </p>
           )}
         </div>
 
-        {/* Action buttons — always show move-to-tomorrow; hide edit on compact */}
-        <div className="flex items-center gap-0.5 shrink-0">
-          {!isCompact && onEdit && (
+        {/* Action buttons — always visible */}
+        <div className="flex items-center gap-0 shrink-0">
+          {onEdit && (
             <button
               aria-label="Edit task"
-              onPointerDown={(e) => e.stopPropagation()}
-              onPointerUp={(e) => {
+              onClick={(e) => {
                 e.stopPropagation();
                 onEdit();
               }}
-              className="flex items-center justify-center rounded-lg p-2 opacity-60 active:bg-secondary/50 transition-opacity"
+              className="flex items-center justify-center rounded-lg p-1.5 opacity-60 active:bg-secondary/50 transition-opacity"
             >
               <Pencil className="h-3.5 w-3.5 text-muted-foreground" />
             </button>
@@ -539,24 +539,23 @@ function ScheduleBlock({
           {onMoveToTomorrow && (
             <button
               aria-label="Move to tomorrow"
-              onPointerDown={(e) => e.stopPropagation()}
-              onPointerUp={(e) => {
+              onClick={(e) => {
                 e.stopPropagation();
                 onMoveToTomorrow();
               }}
-              className={`flex items-center justify-center rounded-lg opacity-60 active:bg-secondary/50 transition-opacity ${isCompact ? "p-1 -mr-1" : "p-2 -mr-1"}`}
+              className="flex items-center justify-center rounded-lg p-1.5 opacity-60 active:bg-secondary/50 transition-opacity -mr-0.5"
             >
-              <ArrowRight className={`text-muted-foreground ${isCompact ? "h-3.5 w-3.5" : "h-4 w-4"}`} />
+              <ArrowRight className="h-3.5 w-3.5 text-muted-foreground" />
             </button>
           )}
         </div>
       </div>
     </div>
   );
-}
+});
 
 // ─── Compact block for the 3-day grid view on desktop ───
-function ThreeDayGridBlock({
+const ThreeDayGridBlock = memo(function ThreeDayGridBlock({
   block,
   column,
   totalColumns,
@@ -613,7 +612,7 @@ function ThreeDayGridBlock({
       )}
     </div>
   );
-}
+});
 
 function ThreeDayView({ baseDate, onEditTask }: { baseDate: Date; onEditTask: (taskId: string) => void }) {
   const isDesktop = useIsDesktop();

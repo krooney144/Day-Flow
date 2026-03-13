@@ -21,17 +21,19 @@ export function findNextAvailableSlot(
     evening: [17, 21],
     any: [8, 20],
   };
-  let [rangeStart, rangeEnd] = defaultRanges[preferredTime] || defaultRanges.any;
 
-  // Constrain to category scheduling window if provided
-  if (categoryWindow) {
-    rangeStart = Math.max(rangeStart, categoryWindow.startHour);
-    rangeEnd = Math.min(rangeEnd, categoryWindow.endHour);
-    // If preferred time falls entirely outside the window, use the window directly
-    if (rangeStart >= rangeEnd) {
-      rangeStart = categoryWindow.startHour;
-      rangeEnd = categoryWindow.endHour;
-    }
+  // Category window is the hard boundary — preferred time is a hint within it
+  const hardStart = categoryWindow ? categoryWindow.startHour : 0;
+  const hardEnd = categoryWindow ? categoryWindow.endHour : 24;
+
+  const [prefStart, prefEnd] = defaultRanges[preferredTime] || defaultRanges.any;
+  // Clamp preferred range to within the category window
+  let rangeStart = Math.max(prefStart, hardStart);
+  let rangeEnd = Math.min(prefEnd, hardEnd);
+  // If preferred time falls entirely outside the window, use the full window
+  if (rangeStart >= rangeEnd) {
+    rangeStart = hardStart;
+    rangeEnd = hardEnd;
   }
 
   // Clamp range start to current time (rounded up to next 15min) if provided
@@ -45,9 +47,9 @@ export function findNextAvailableSlot(
     .map((b) => ({ start: b.startHour, end: b.startHour + b.durationHours }))
     .sort((a, b) => a.start - b.start);
 
-  // Fallback range: use category window if available, else broad range
-  const fallbackStart = categoryWindow ? Math.max(categoryWindow.startHour, now15) : Math.max(7, now15);
-  const fallbackEnd = categoryWindow ? categoryWindow.endHour : 22;
+  // Fallback range: full category window (or broad range if no window)
+  const fallbackStart = Math.max(hardStart, now15);
+  const fallbackEnd = hardEnd;
 
   for (const tryRange of [
     [effectiveStart, rangeEnd],
@@ -67,13 +69,36 @@ export function findNextAvailableSlot(
       candidate = Math.round(candidate * 4) / 4;
     }
   }
-  // Fallback: schedule at next available hour from now
-  return currentHour !== undefined ? Math.ceil(currentHour * 4) / 4 : 8;
+  // Fallback: schedule at start of category window or 8am
+  return Math.max(currentHour !== undefined ? Math.ceil(currentHour * 4) / 4 : hardStart, hardStart);
+}
+
+const MAX_OVERLAP = 3;
+
+/**
+ * Count how many blocks overlap at a given point in time.
+ */
+function countOverlapsAt(blocks: TimeBlock[], hour: number, excludeId?: string): number {
+  return blocks.filter(
+    (b) => b.id !== excludeId && hour >= b.startHour && hour < b.startHour + b.durationHours
+  ).length;
+}
+
+/**
+ * Check if adding a block would exceed the max overlap limit at any point.
+ */
+function wouldExceedMaxOverlap(placed: TimeBlock[], block: TimeBlock): boolean {
+  // Check at block start and every 15-min within the block
+  for (let h = block.startHour; h < block.startHour + block.durationHours; h += 0.25) {
+    if (countOverlapsAt(placed, h, block.id) >= MAX_OVERLAP) return true;
+  }
+  return false;
 }
 
 /**
  * Resolve overlaps after a block is placed at a specific time.
- * Displaced blocks get shifted forward to the next available slot.
+ * Allows up to MAX_OVERLAP (3) blocks at the same time.
+ * Only displaces blocks when a 4th+ would overlap.
  * Fixed blocks are never moved. Returns the full updated block list.
  */
 export function resolveOverlaps(
@@ -105,16 +130,8 @@ export function resolveOverlaps(
       continue;
     }
 
-    // Check if current position conflicts with any placed block
-    const hasConflict = placed.some(
-      (p) =>
-        p.date === block.date &&
-        block.startHour < p.startHour + p.durationHours &&
-        block.startHour + block.durationHours > p.startHour
-    );
-
-    if (hasConflict) {
-      // Find next available slot after the block's current time
+    // Only displace if adding this block would exceed max overlap
+    if (wouldExceedMaxOverlap(placed, block)) {
       const startHour = findNextAvailableSlot(
         placed,
         block.durationHours,

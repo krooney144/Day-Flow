@@ -116,10 +116,11 @@ export function executeToolCalls(
   for (const tc of toolCalls) {
     switch (tc.name) {
       case "create_tasks": {
-        // Build set of existing active task titles for dedup
+        // Build set of existing task titles for dedup — include active tasks,
+        // recurring templates, and recurring instances to prevent duplicates
         const existingTitles = new Set(
           existingTasks
-            .filter((t) => t.status === "active")
+            .filter((t) => t.status === "active" || t.recurring)
             .map((t) => t.title.toLowerCase().trim())
         );
 
