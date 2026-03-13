@@ -25,10 +25,10 @@ export function useTaskScheduleSync() {
       timeBlocks.filter((b) => b.taskId).map((b) => b.taskId)
     );
     // Also track scheduled titles to catch blocks where AI omitted taskId
+    // Include ALL block types (task, event, meal, etc.) to prevent duplicates
+    // when a task has a corresponding fixed event block
     const scheduledTitles = new Set(
-      timeBlocks
-        .filter((b) => b.type === "task")
-        .map((b) => b.title.toLowerCase().trim())
+      timeBlocks.map((b) => b.title.toLowerCase().trim())
     );
 
     const orphaned = activeTasks.filter(
