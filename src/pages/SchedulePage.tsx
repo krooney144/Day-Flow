@@ -5,6 +5,9 @@ import { CATEGORY_COLOR_MAP, CATEGORY_COLOR_BG_MAP, TimeBlock, Task } from "@/ty
 import { ChevronLeft, ChevronRight, Check, ArrowRight, Pencil } from "lucide-react";
 import { formatHour } from "@/lib/utils";
 import TaskDetailSheet from "@/components/dayflow/TaskDetailSheet";
+import QuickAddTask from "@/components/dayflow/QuickAddTask";
+import ScheduleChatFab from "@/components/dayflow/ScheduleChatFab";
+import { useMealBlocks } from "@/hooks/useMealBlocks";
 
 const HOUR_HEIGHT = 64; // px per hour
 const START_HOUR = 0;
@@ -31,9 +34,11 @@ function useIsDesktop() {
 
 export default function SchedulePage() {
   const { getBlocksForDate, getCategory, preferences, tasks } = useDayFlow();
+  useMealBlocks();
   const [view, setView] = useState<ScheduleView>("day");
   const [dateOffset, setDateOffset] = useState(0);
   const [editingTask, setEditingTask] = useState<Task | null>(null);
+  const [showAdd, setShowAdd] = useState(false);
 
   const currentDate = useMemo(() => {
     const d = new Date();
@@ -135,8 +140,12 @@ export default function SchedulePage() {
         )}
       </div>
 
+      {/* FAB + mini chat */}
+      <ScheduleChatFab onAddTask={() => setShowAdd(true)} />
+
       {/* Task Detail Sheet */}
       <TaskDetailSheet task={editingTask} onClose={() => setEditingTask(null)} />
+      <QuickAddTask open={showAdd} onClose={() => setShowAdd(false)} />
     </div>
   );
 }
@@ -502,37 +511,35 @@ function ScheduleBlock({
           )}
         </div>
 
-        {/* Action buttons — hide on compact blocks to save space */}
-        {!isCompact && (
-          <div className="flex items-center gap-0.5 shrink-0">
-            {onEdit && (
-              <button
-                aria-label="Edit task"
-                onPointerDown={(e) => e.stopPropagation()}
-                onClick={(e) => {
-                  e.stopPropagation();
-                  onEdit();
-                }}
-                className="flex items-center justify-center rounded-lg p-1.5 opacity-50 hover:opacity-100 active:bg-secondary/50 transition-opacity"
-              >
-                <Pencil className="h-3.5 w-3.5 text-muted-foreground" />
-              </button>
-            )}
-            {onMoveToTomorrow && (
-              <button
-                aria-label="Move to tomorrow"
-                onPointerDown={(e) => e.stopPropagation()}
-                onClick={(e) => {
-                  e.stopPropagation();
-                  onMoveToTomorrow();
-                }}
-                className="flex items-center justify-center rounded-lg p-1.5 opacity-50 hover:opacity-100 active:bg-secondary/50 transition-opacity"
-              >
-                <ArrowRight className="h-3.5 w-3.5 text-muted-foreground" />
-              </button>
-            )}
-          </div>
-        )}
+        {/* Action buttons — always show move-to-tomorrow; hide edit on compact */}
+        <div className="flex items-center gap-0.5 shrink-0">
+          {!isCompact && onEdit && (
+            <button
+              aria-label="Edit task"
+              onPointerDown={(e) => e.stopPropagation()}
+              onClick={(e) => {
+                e.stopPropagation();
+                onEdit();
+              }}
+              className="flex items-center justify-center rounded-lg p-1.5 opacity-50 hover:opacity-100 active:bg-secondary/50 transition-opacity"
+            >
+              <Pencil className="h-3.5 w-3.5 text-muted-foreground" />
+            </button>
+          )}
+          {onMoveToTomorrow && (
+            <button
+              aria-label="Move to tomorrow"
+              onPointerDown={(e) => e.stopPropagation()}
+              onClick={(e) => {
+                e.stopPropagation();
+                onMoveToTomorrow();
+              }}
+              className={`flex items-center justify-center rounded-lg opacity-50 hover:opacity-100 active:bg-secondary/50 transition-opacity ${isCompact ? "p-0.5" : "p-1.5"}`}
+            >
+              <ArrowRight className={`text-muted-foreground ${isCompact ? "h-3 w-3" : "h-3.5 w-3.5"}`} />
+            </button>
+          )}
+        </div>
       </div>
     </div>
   );

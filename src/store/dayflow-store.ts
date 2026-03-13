@@ -38,6 +38,7 @@ const defaultPreferences: UserPreferences = {
   workStartHour: 8,
   workEndHour: 18,
   lunchHour: 12,
+  dinnerHour: 18.5,
   workoutTime: "morning",
   defaultTaskDuration: 30,
   includeBreaks: true,
