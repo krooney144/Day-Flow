@@ -4,8 +4,9 @@ export type TaskHorizon = "today" | "soon" | "this-week" | "backlog";
 export type TimeOfDay = "morning" | "afternoon" | "evening" | "any";
 
 export interface SchedulingWindow {
-  startHour: number; // 0-23
-  endHour: number;   // 1-24
+  startHour: number;    // 0-23
+  endHour: number;      // 1-24
+  allowedDays?: number[]; // 0=Sun, 1=Mon, ..., 6=Sat. undefined = all days
 }
 
 export interface Category {

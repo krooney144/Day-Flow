@@ -1,6 +1,6 @@
 import { useEffect, useRef } from "react";
 import { useDayFlow } from "@/context/DayFlowContext";
-import { findNextAvailableSlot } from "@/lib/scheduling-utils";
+import { findNextAvailableSlot, isDayAllowed } from "@/lib/scheduling-utils";
 import { TimeBlock } from "@/types/dayflow";
 
 /**
@@ -21,14 +21,14 @@ function normalizeTitle(raw: string): string {
  * and auto-create blocks for them. Runs ONCE (not reactively) to avoid
  * render cascades from updating timeBlocks inside an effect that depends on
  * timeBlocks.
+ *
+ * Respects category scheduling windows (hours + allowed days).
  */
 export function useTaskScheduleSync() {
   const { tasks, timeBlocks, addTimeBlocks, preferences } = useDayFlow();
   const hasRun = useRef(false);
 
   useEffect(() => {
-    // Only run once per mount — the auto-scheduling fallback in executeToolCalls
-    // handles the AI path; this is just a safety net for app startup.
     if (hasRun.current) return;
     hasRun.current = true;
 
@@ -59,13 +59,13 @@ export function useTaskScheduleSync() {
     });
     if (orphaned.length === 0) return;
 
-    // Build list of schedulable dates
-    const dates: string[] = [];
+    // Build candidate dates (look ahead 14 days for day-of-week filtering)
+    const allDates: string[] = [];
     const startOffset = isPastWorkHours ? 1 : 0;
-    for (let i = startOffset; i < startOffset + 7; i++) {
+    for (let i = startOffset; i < startOffset + 14; i++) {
       const d = new Date(now);
       d.setDate(d.getDate() + i);
-      dates.push(d.toISOString().split("T")[0]);
+      allDates.push(d.toISOString().split("T")[0]);
     }
 
     const newBlocks: TimeBlock[] = [];
@@ -73,6 +73,13 @@ export function useTaskScheduleSync() {
     for (const task of orphaned) {
       const durationHours = (task.estimatedMinutes || 30) / 60;
       const category = preferences.categories.find((c) => c.id === task.categoryId);
+      const catWindow = category?.schedulingWindow;
+
+      // Filter dates to only allowed days for this category
+      const dates = catWindow?.allowedDays?.length
+        ? allDates.filter((d) => isDayAllowed(d, catWindow))
+        : allDates;
+      if (dates.length === 0) continue;
 
       let targetDate: string;
       switch (task.horizon) {
@@ -97,7 +104,7 @@ export function useTaskScheduleSync() {
         task.preferredTime,
         targetDate,
         minHour,
-        category?.schedulingWindow
+        catWindow
       );
       newBlocks.push({
         id: `b-sync-${task.id}`,

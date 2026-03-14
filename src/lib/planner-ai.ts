@@ -1,5 +1,5 @@
 import { Task, TimeBlock, UserPreferences, ChatMessage } from "@/types/dayflow";
-import { findNextAvailableSlot, resolveOverlaps } from "@/lib/scheduling-utils";
+import { findNextAvailableSlot, resolveOverlaps, clampToWindow, isDayAllowed } from "@/lib/scheduling-utils";
 
 const CHAT_URL = "/api/planner-chat";
 
@@ -62,24 +62,32 @@ function getSchedulableDates(preferences: { workEndHour?: number; workStartHour?
 
 /**
  * Determine the best date to auto-schedule a task on based on its horizon.
+ * Skips dates that fall on disallowed days for the category's scheduling window.
  */
 function getAutoScheduleDateForHorizon(
   horizon: string | undefined,
   preferences: { workEndHour?: number; workStartHour?: number },
-  dayIndex: number
+  dayIndex: number,
+  categoryWindow?: import("@/types/dayflow").SchedulingWindow
 ): string {
-  const dates = getSchedulableDates(preferences);
+  const allDates = getSchedulableDates(preferences, 14); // look ahead further for day filtering
+  // Filter to only allowed days for this category
+  const dates = categoryWindow?.allowedDays?.length
+    ? allDates.filter((d) => isDayAllowed(d, categoryWindow))
+    : allDates;
+  if (dates.length === 0) return allDates[0]; // fallback if no days allowed
+
   switch (horizon) {
     case "today":
-      return dates[0]; // Today or tomorrow if past work hours
+      return dates[0];
     case "soon":
-      return dates[Math.min(dayIndex % 3, dates.length - 1)]; // Spread across next 2-3 days
+      return dates[Math.min(dayIndex % 3, dates.length - 1)];
     case "this-week":
-      return dates[Math.min(dayIndex % dates.length, dates.length - 1)]; // Spread across the week
+      return dates[Math.min(dayIndex % dates.length, dates.length - 1)];
     case "backlog":
-      return dates[Math.min(3 + (dayIndex % 4), dates.length - 1)]; // Later in the week
+      return dates[Math.min(3 + (dayIndex % 4), dates.length - 1)];
     default:
-      return dates[Math.min(dayIndex, dates.length - 1)]; // Default: spread
+      return dates[Math.min(dayIndex, dates.length - 1)];
   }
 }
 
@@ -283,9 +291,13 @@ export function executeToolCalls(
           const aiTitle = (ab.title || "").toLowerCase().trim();
           const aiTitleNormalized = normalizeTitle(ab.title || "");
           const aiType = ab.type || "task";
-          const clampedStart = targetDate === today
+          const timeClamp = targetDate === today
             ? Math.max(ab.startHour, Math.ceil(currentHour * 4) / 4)
             : ab.startHour;
+          // Clamp to category scheduling window so AI blocks stay within user-set hours
+          const blockCatId = ab.categoryId || "";
+          const blockCatWindow = store.preferences?.categories?.find((c) => c.id === blockCatId)?.schedulingWindow;
+          const clampedStart = ab.isFixed ? timeClamp : clampToWindow(timeClamp, ab.durationHours || 0.5, blockCatWindow);
 
           // Search ALL days for an existing block matching this AI block
           // Priority: match by taskId first, then exact title, then normalized title
@@ -359,11 +371,12 @@ export function executeToolCalls(
         });
 
         // Resolve overlaps: fixed blocks first, then flex blocks
+        const cats = store.preferences?.categories;
         const dateBlocks = allBlocks.filter((b) => b.date === targetDate);
         const fixedOnDate = dateBlocks.filter((b) => b.isFixed);
         const flexOnDate = dateBlocks.filter((b) => !b.isFixed);
         for (const block of fixedOnDate) {
-          allBlocks = resolveOverlaps(allBlocks, block.id);
+          allBlocks = resolveOverlaps(allBlocks, block.id, 1, cats);
         }
         for (const block of flexOnDate) {
           const dayBlocks = allBlocks.filter((b) => b.date === targetDate && b.id !== block.id);
@@ -371,12 +384,14 @@ export function executeToolCalls(
             (b) => block.startHour < b.startHour + b.durationHours && block.startHour + block.durationHours > b.startHour
           );
           if (hasConflict) {
+            const flexCatWindow = cats?.find((c) => c.id === block.categoryId)?.schedulingWindow;
             const newStart = findNextAvailableSlot(
               dayBlocks,
               block.durationHours,
               "any",
               targetDate,
-              block.startHour
+              block.startHour,
+              flexCatWindow
             );
             const idx = allBlocks.findIndex((b) => b.id === block.id);
             if (idx !== -1) {
@@ -412,7 +427,7 @@ export function executeToolCalls(
           type: tc.arguments.type || "break",
         };
         allBlocks.push(block);
-        allBlocks = resolveOverlaps(allBlocks, block.id);
+        allBlocks = resolveOverlaps(allBlocks, block.id, 1, store.preferences?.categories);
         summaries.push(`Added ${tc.arguments.type || "break"}`);
         break;
       }
@@ -442,7 +457,7 @@ export function executeToolCalls(
           if (alreadyOnTarget) continue;
 
           allBlocks[idx] = { ...block, date: move.targetDate };
-          allBlocks = resolveOverlaps(allBlocks, block.id);
+          allBlocks = resolveOverlaps(allBlocks, block.id, 1, store.preferences?.categories);
           blocksChanged = true;
           movedCount++;
         }
@@ -499,11 +514,11 @@ export function executeToolCalls(
     let dayIndex = 0;
     for (const task of unscheduled) {
       if (task.horizon === "backlog") continue;
-      const targetDate = getAutoScheduleDateForHorizon(task.horizon, prefs, dayIndex);
+      const catWindow = store.preferences?.categories?.find((c) => c.id === task.categoryId)?.schedulingWindow;
+      const targetDate = getAutoScheduleDateForHorizon(task.horizon, prefs, dayIndex, catWindow);
       const isToday = targetDate === today;
       const minHour = isToday ? currentHour : undefined;
       const durationHours = (task.estimatedMinutes || 30) / 60;
-      const catWindow = store.preferences?.categories?.find((c) => c.id === task.categoryId)?.schedulingWindow;
       const startHour = findNextAvailableSlot(
         allBlocks,
         durationHours,
@@ -535,11 +550,11 @@ export function executeToolCalls(
     let dayIdx = 0;
 
     for (const task of schedulableTasks) {
-      const targetDate = getAutoScheduleDateForHorizon(task.horizon, prefs2, dayIdx);
+      const catWindow2 = store.preferences?.categories?.find((c) => c.id === task.categoryId)?.schedulingWindow;
+      const targetDate = getAutoScheduleDateForHorizon(task.horizon, prefs2, dayIdx, catWindow2);
       const isToday = targetDate === today;
       const minHour = isToday ? currentHour : undefined;
       const durationHours = (task.estimatedMinutes || 30) / 60;
-      const catWindow2 = store.preferences?.categories?.find((c) => c.id === task.categoryId)?.schedulingWindow;
       const startHour = findNextAvailableSlot(
         allBlocks,
         durationHours,

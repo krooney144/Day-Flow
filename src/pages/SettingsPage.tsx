@@ -1,7 +1,7 @@
 import { useState } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import { useDayFlow } from "@/context/DayFlowContext";
-import { CATEGORY_COLOR_MAP, Category, TimeOfDay } from "@/types/dayflow";
+import { CATEGORY_COLOR_MAP, CATEGORY_COLOR_BG_MAP, CATEGORY_TEXT_COLOR_MAP, Category, TimeOfDay } from "@/types/dayflow";
 import { ChevronRight, ChevronDown, Minus, Plus } from "lucide-react";
 import { cn } from "@/lib/utils";
 
@@ -36,6 +36,27 @@ export default function SettingsPage() {
       const current = c.schedulingWindow || { startHour: 7, endHour: 21 };
       return { ...c, schedulingWindow: { ...current, [field]: value } };
     });
+    // Sync global workStartHour/workEndHour when work category changes
+    const extra: Record<string, number> = {};
+    if (catId === "work") {
+      if (field === "startHour") extra.workStartHour = value;
+      if (field === "endHour") extra.workEndHour = value;
+    }
+    updatePreferences({ categories: updatedCategories, ...extra });
+  };
+
+  const toggleCategoryDay = (catId: string, day: number) => {
+    const updatedCategories = preferences.categories.map((c) => {
+      if (c.id !== catId) return c;
+      const current = c.schedulingWindow || { startHour: 7, endHour: 21 };
+      const currentDays = current.allowedDays || [0, 1, 2, 3, 4, 5, 6];
+      const newDays = currentDays.includes(day)
+        ? currentDays.filter((d) => d !== day)
+        : [...currentDays, day].sort();
+      // Don't allow removing all days
+      if (newDays.length === 0) return c;
+      return { ...c, schedulingWindow: { ...current, allowedDays: newDays } };
+    });
     updatePreferences({ categories: updatedCategories });
   };
 
@@ -49,36 +70,6 @@ export default function SettingsPage() {
       <div className="flex-1 overflow-y-auto px-4 pb-24">
         {/* Planning */}
         <Section title="Planning">
-          <HourStepper
-            label="Work starts"
-            value={preferences.workStartHour}
-            onChange={(v) => {
-              updatePreferences({ workStartHour: v });
-              // Also update work category window start
-              const updatedCategories = preferences.categories.map((c) =>
-                c.id === "work"
-                  ? { ...c, schedulingWindow: { ...(c.schedulingWindow || { startHour: v, endHour: preferences.workEndHour }), startHour: v } }
-                  : c
-              );
-              updatePreferences({ workStartHour: v, categories: updatedCategories });
-            }}
-            min={4}
-            max={12}
-          />
-          <HourStepper
-            label="Work ends"
-            value={preferences.workEndHour}
-            onChange={(v) => {
-              const updatedCategories = preferences.categories.map((c) =>
-                c.id === "work"
-                  ? { ...c, schedulingWindow: { ...(c.schedulingWindow || { startHour: preferences.workStartHour, endHour: v }), endHour: v } }
-                  : c
-              );
-              updatePreferences({ workEndHour: v, categories: updatedCategories });
-            }}
-            min={14}
-            max={22}
-          />
           <HourStepper
             label="Lunch at"
             value={preferences.lunchHour}
@@ -117,13 +108,16 @@ export default function SettingsPage() {
         {/* Category Scheduling Windows */}
         <Section title="Category Schedule Windows">
           <p className="text-xs text-muted-foreground px-3 py-2">
-            Set when each category can be scheduled. Work tasks stay within work hours; other categories have flexible windows.
+            Set the hours and days each category can be scheduled.
           </p>
           {preferences.categories.map((cat) => {
             const dotClass = CATEGORY_COLOR_MAP[cat.color] || "bg-muted";
+            const bgClass = CATEGORY_COLOR_BG_MAP[cat.color] || "bg-muted/20";
+            const textClass = CATEGORY_TEXT_COLOR_MAP[cat.color] || "text-foreground";
             const isExpanded = expandedCategory === cat.id;
             const window = cat.schedulingWindow || { startHour: 7, endHour: 21 };
-            const isWorkCategory = cat.id === "work";
+            const allowedDays = window.allowedDays || [0, 1, 2, 3, 4, 5, 6];
+            const dayLabels = ["S", "M", "T", "W", "T", "F", "S"];
 
             return (
               <div key={cat.id}>
@@ -147,12 +141,7 @@ export default function SettingsPage() {
                       transition={{ duration: 0.2 }}
                       className="overflow-hidden"
                     >
-                      <div className="px-3 pb-3 space-y-2">
-                        {isWorkCategory && (
-                          <p className="text-[10px] text-muted-foreground">
-                            Synced with work hours above
-                          </p>
-                        )}
+                      <div className="px-3 pb-3 space-y-3">
                         <div className="flex items-center justify-between">
                           <span className="text-xs text-muted-foreground">Earliest</span>
                           <HourStepperInline
@@ -160,7 +149,6 @@ export default function SettingsPage() {
                             onChange={(v) => updateCategoryWindow(cat.id, "startHour", v)}
                             min={0}
                             max={window.endHour - 1}
-                            disabled={isWorkCategory}
                           />
                         </div>
                         <div className="flex items-center justify-between">
@@ -170,8 +158,29 @@ export default function SettingsPage() {
                             onChange={(v) => updateCategoryWindow(cat.id, "endHour", v)}
                             min={window.startHour + 1}
                             max={24}
-                            disabled={isWorkCategory}
                           />
+                        </div>
+                        <div>
+                          <span className="text-xs text-muted-foreground">Active days</span>
+                          <div className="flex items-center gap-1.5 mt-1.5">
+                            {dayLabels.map((label, dayIdx) => {
+                              const isActive = allowedDays.includes(dayIdx);
+                              return (
+                                <button
+                                  key={dayIdx}
+                                  onClick={() => toggleCategoryDay(cat.id, dayIdx)}
+                                  className={cn(
+                                    "flex h-8 w-8 items-center justify-center rounded-full text-xs font-medium transition-all",
+                                    isActive
+                                      ? `${bgClass} ${textClass}`
+                                      : "bg-muted/30 text-muted-foreground/50"
+                                  )}
+                                >
+                                  {label}
+                                </button>
+                              );
+                            })}
+                          </div>
                         </div>
                       </div>
                     </motion.div>
@@ -346,16 +355,14 @@ function HourStepperInline({
   onChange,
   min,
   max,
-  disabled,
 }: {
   value: number;
   onChange: (v: number) => void;
   min: number;
   max: number;
-  disabled?: boolean;
 }) {
   return (
-    <div className={cn("flex items-center gap-1.5", disabled && "opacity-40 pointer-events-none")}>
+    <div className="flex items-center gap-1.5">
       <button
         onClick={() => onChange(Math.max(min, value - 1))}
         disabled={value <= min}

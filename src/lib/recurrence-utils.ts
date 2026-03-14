@@ -1,5 +1,5 @@
 import { Task, TimeBlock, RecurrenceRule, SchedulingWindow } from "@/types/dayflow";
-import { findNextAvailableSlot } from "./scheduling-utils";
+import { findNextAvailableSlot, isDayAllowed } from "./scheduling-utils";
 
 const ROLLING_WINDOW_DAYS = 14;
 
@@ -29,7 +29,12 @@ export function generateRecurringInstances(
 
     const dates = getRecurrenceDates(rule, today, ROLLING_WINDOW_DAYS);
 
+    const catWindow = categories.find((c) => c.id === template.categoryId)?.schedulingWindow;
+
     for (const dateStr of dates) {
+      // Skip if this date's day-of-week is not allowed for the category
+      if (!isDayAllowed(dateStr, catWindow)) continue;
+
       // Check if instance already exists for this rule + date
       const alreadyExists = existingTasks.some(
         (t) =>
@@ -73,7 +78,6 @@ export function generateRecurringInstances(
 
       // Auto-schedule the instance
       const durationHours = (template.estimatedMinutes || 30) / 60;
-      const catWindow = categories.find((c) => c.id === template.categoryId)?.schedulingWindow;
       const allBlocks = [...existingBlocks, ...newBlocks];
       const startHour = findNextAvailableSlot(
         allBlocks,
