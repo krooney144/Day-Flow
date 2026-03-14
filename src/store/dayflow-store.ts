@@ -145,8 +145,6 @@ export function useDayFlowStore() {
   const cloudSaveTimer = useRef<ReturnType<typeof setTimeout>>();
   // Prevents real-time events from triggering a sync back to Supabase
   const isRemoteUpdate = useRef(false);
-  // Task IDs created as part of an AI bulk schedule (ephemeral, not persisted)
-  const aiScheduledTaskIdsRef = useRef<Set<string>>(new Set());
 
   // Helper: update state + localStorage only (no cloud sync)
   const setStateLocal = useCallback(
@@ -603,13 +601,6 @@ export function useDayFlowStore() {
     await clearCloud();
   }, []);
 
-  const setAIScheduledTaskIds = useCallback((ids: string[]) => {
-    aiScheduledTaskIdsRef.current = new Set(ids);
-  }, []);
-
-  const getAIScheduledTaskIds = useCallback((): Set<string> => {
-    return aiScheduledTaskIdsRef.current;
-  }, []);
 
   return {
     ...state,
@@ -644,7 +635,5 @@ export function useDayFlowStore() {
     generateRecurrences,
     clearAllData,
     setState,
-    setAIScheduledTaskIds,
-    getAIScheduledTaskIds,
   };
 }

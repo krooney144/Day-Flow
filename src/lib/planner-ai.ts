@@ -171,7 +171,6 @@ export function executeToolCalls(
     updatePreferences: (prefs: Partial<UserPreferences>) => void;
     addProject: (categoryId: string, projectName: string) => void;
     moveBlockToDate: (blockId: string, newDate: string) => void;
-    setAIScheduledTaskIds?: (ids: string[]) => void;
     preferences?: UserPreferences;
   },
   existingTimeBlocks: TimeBlock[] = [],
@@ -481,15 +480,50 @@ export function executeToolCalls(
       block.categoryId = matchedTask.categoryId;
     }
 
-    // Trust the AI's generate_schedule decisions. Do NOT auto-schedule tasks
-    // that weren't matched — the AI made deliberate choices about placement.
-    // Title mismatches between create_tasks and generate_schedule would cause
-    // false "unscheduled" detection, creating duplicate blocks on today.
-    // The useTaskScheduleSync hook handles truly orphaned tasks as a safety net.
-
-    // Mark all created tasks as AI-scheduled so the sync hook skips them
-    if (store.setAIScheduledTaskIds) {
-      store.setAIScheduledTaskIds(createdTasks.map((t) => t.id));
+    // Find created tasks that still don't have a schedule block after reconciliation.
+    // Check by taskId, exact title, AND normalized title to avoid false positives.
+    const scheduledIds = new Set(allBlocks.filter((b) => b.taskId).map((b) => b.taskId));
+    const scheduledTitlesExact = new Set(
+      allBlocks.map((b) => b.title.toLowerCase().trim())
+    );
+    const scheduledTitlesNormalized = new Set(
+      allBlocks.map((b) => normalizeTitle(b.title))
+    );
+    const unscheduled = createdTasks.filter(
+      (t) =>
+        !scheduledIds.has(t.id) &&
+        !scheduledTitlesExact.has(t.title.toLowerCase().trim()) &&
+        !scheduledTitlesNormalized.has(normalizeTitle(t.title))
+    );
+    const prefs = store.preferences || {};
+    let dayIndex = 0;
+    for (const task of unscheduled) {
+      if (task.horizon === "backlog") continue;
+      const targetDate = getAutoScheduleDateForHorizon(task.horizon, prefs, dayIndex);
+      const isToday = targetDate === today;
+      const minHour = isToday ? currentHour : undefined;
+      const durationHours = (task.estimatedMinutes || 30) / 60;
+      const catWindow = store.preferences?.categories?.find((c) => c.id === task.categoryId)?.schedulingWindow;
+      const startHour = findNextAvailableSlot(
+        allBlocks,
+        durationHours,
+        task.preferredTime,
+        targetDate,
+        minHour,
+        catWindow
+      );
+      allBlocks.push({
+        id: `b-auto-${task.id}`,
+        taskId: task.id,
+        title: task.title,
+        categoryId: task.categoryId,
+        date: targetDate,
+        startHour,
+        durationHours,
+        isFixed: false,
+        type: "task",
+      });
+      dayIndex++;
     }
     blocksChanged = true;
   }
