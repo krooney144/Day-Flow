@@ -1,4 +1,4 @@
-import { TimeBlock, SchedulingWindow } from "@/types/dayflow";
+import { TimeBlock, SchedulingWindow, Category } from "@/types/dayflow";
 
 /**
  * Find the next available time slot given existing blocks.
@@ -73,6 +73,35 @@ export function findNextAvailableSlot(
   return Math.max(currentHour !== undefined ? Math.ceil(currentHour * 4) / 4 : hardStart, hardStart);
 }
 
+/**
+ * Check if a date's day-of-week is allowed by the scheduling window.
+ * Returns true if no allowedDays restriction (undefined or empty).
+ */
+export function isDayAllowed(date: string, window?: SchedulingWindow): boolean {
+  if (!window?.allowedDays || window.allowedDays.length === 0) return true;
+  const dayOfWeek = new Date(date + "T12:00:00").getDay(); // 0=Sun
+  return window.allowedDays.includes(dayOfWeek);
+}
+
+/**
+ * Clamp a block's start hour to fit within a category scheduling window.
+ * If the block starts before the window, push it to window start.
+ * If the block would end after the window, pull it back so it fits.
+ */
+export function clampToWindow(
+  startHour: number,
+  durationHours: number,
+  window?: SchedulingWindow
+): number {
+  if (!window) return startHour;
+  let clamped = Math.max(startHour, window.startHour);
+  // Pull back if it would end after the window
+  if (clamped + durationHours > window.endHour) {
+    clamped = Math.max(window.startHour, window.endHour - durationHours);
+  }
+  return Math.round(clamped * 4) / 4; // snap to 15min
+}
+
 /** Default: code-initiated moves allow no overlaps */
 const DEFAULT_MAX_OVERLAP = 1;
 /** User drag-drop allows up to 2 blocks at the same time */
@@ -109,7 +138,8 @@ function wouldExceedMaxOverlap(placed: TimeBlock[], block: TimeBlock, maxOverlap
 export function resolveOverlaps(
   allBlocks: TimeBlock[],
   movedBlockId: string,
-  maxOverlap: number = DEFAULT_MAX_OVERLAP
+  maxOverlap: number = DEFAULT_MAX_OVERLAP,
+  categories?: Category[]
 ): TimeBlock[] {
   const blocks = allBlocks.map((b) => ({ ...b }));
   const moved = blocks.find((b) => b.id === movedBlockId);
@@ -138,12 +168,14 @@ export function resolveOverlaps(
 
     // Only displace if adding this block would exceed max overlap
     if (wouldExceedMaxOverlap(placed, block, maxOverlap)) {
+      const catWindow = categories?.find((c) => c.id === block.categoryId)?.schedulingWindow;
       const startHour = findNextAvailableSlot(
         placed,
         block.durationHours,
         "any",
         date,
-        block.startHour
+        block.startHour,
+        catWindow
       );
       block.startHour = startHour;
     }

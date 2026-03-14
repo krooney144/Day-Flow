@@ -49,12 +49,12 @@ const defaultPreferences: UserPreferences = {
     ...c,
     schedulingWindow:
       c.id === "work"
-        ? { startHour: 9, endHour: 17 }
+        ? { startHour: 9, endHour: 17, allowedDays: [1, 2, 3, 4, 5] }
         : c.id === "school"
-        ? { startHour: 10, endHour: 22 }
+        ? { startHour: 10, endHour: 22, allowedDays: [1, 2, 3, 4, 5] }
         : c.id === "social"
         ? { startHour: 10, endHour: 22 }
-        : { startHour: 10, endHour: 21 }, // life-admin
+        : { startHour: 10, endHour: 21 }, // life-admin — all days
   })),
 };
 
@@ -128,13 +128,13 @@ function saveState(state: DayFlowState) {
 const today = new Date().toISOString().split("T")[0];
 
 /** Resolve overlaps across all dates in a block array */
-function resolveAllOverlaps(blocks: TimeBlock[]): TimeBlock[] {
+function resolveAllOverlaps(blocks: TimeBlock[], categories?: Category[]): TimeBlock[] {
   let resolved = [...blocks];
   const dates = [...new Set(blocks.map((b) => b.date))];
   for (const date of dates) {
     const dateBlockIds = resolved.filter((b) => b.date === date).map((b) => b.id);
     for (const blockId of dateBlockIds) {
-      resolved = resolveOverlaps(resolved, blockId);
+      resolved = resolveOverlaps(resolved, blockId, 1, categories);
     }
   }
   return resolved;
@@ -168,10 +168,11 @@ export function useDayFlowStore() {
         if (cloud) {
           setStateRaw((prev) => {
             const rawBlocks = cloud.timeBlocks.length > 0 ? cloud.timeBlocks : prev.timeBlocks;
+            const cats = cloud.preferences?.categories || prev.preferences.categories;
             const next: DayFlowState = {
               ...prev,
               tasks: cloud.tasks.length > 0 ? cloud.tasks : prev.tasks,
-              timeBlocks: resolveAllOverlaps(rawBlocks),
+              timeBlocks: resolveAllOverlaps(rawBlocks, cats),
               chatMessages: cloud.chatMessages.length > 0 ? cloud.chatMessages : prev.chatMessages,
               preferences: cloud.preferences,
               customProjects: cloud.customProjects,
@@ -250,7 +251,7 @@ export function useDayFlowStore() {
               ? prev.timeBlocks.map((b) => (b.id === block.id ? block : b))
               : [...prev.timeBlocks, block];
             // Resolve overlaps for the incoming block
-            timeBlocks = resolveOverlaps(timeBlocks, block.id);
+            timeBlocks = resolveOverlaps(timeBlocks, block.id, 1, prev.preferences.categories);
           }
           return { ...prev, timeBlocks };
         });
@@ -299,10 +300,11 @@ export function useDayFlowStore() {
           if (cloud) {
             setStateLocal((prev) => {
               const rawBlocks = cloud.timeBlocks.length > 0 ? cloud.timeBlocks : prev.timeBlocks;
+              const cats2 = cloud.preferences?.categories || prev.preferences.categories;
               return {
                 ...prev,
                 tasks: cloud.tasks.length > 0 ? cloud.tasks : prev.tasks,
-                timeBlocks: resolveAllOverlaps(rawBlocks),
+                timeBlocks: resolveAllOverlaps(rawBlocks, cats2),
                 chatMessages: cloud.chatMessages.length > 0 ? cloud.chatMessages : prev.chatMessages,
                 preferences: cloud.preferences,
                 customProjects: cloud.customProjects,
@@ -472,7 +474,7 @@ export function useDayFlowStore() {
   const addTimeBlock = useCallback((block: TimeBlock) => {
     setState((s) => {
       const all = [...s.timeBlocks, block];
-      const resolved = resolveOverlaps(all, block.id);
+      const resolved = resolveOverlaps(all, block.id, 1, s.preferences.categories);
       return { ...s, timeBlocks: resolved };
     });
   }, [setState]);
@@ -481,7 +483,7 @@ export function useDayFlowStore() {
     setState((s) => {
       let all = [...s.timeBlocks, ...blocks];
       for (const block of blocks) {
-        all = resolveOverlaps(all, block.id);
+        all = resolveOverlaps(all, block.id, 1, s.preferences.categories);
       }
       return { ...s, timeBlocks: all };
     });
@@ -490,7 +492,7 @@ export function useDayFlowStore() {
   const updateTimeBlock = useCallback((id: string, updates: Partial<TimeBlock>, maxOverlap?: number) => {
     setState((s) => {
       const updated = s.timeBlocks.map((b) => (b.id === id ? { ...b, ...updates } : b));
-      const resolved = resolveOverlaps(updated, id, maxOverlap);
+      const resolved = resolveOverlaps(updated, id, maxOverlap, s.preferences.categories);
       return { ...s, timeBlocks: resolved };
     });
   }, [setState]);
@@ -507,15 +509,14 @@ export function useDayFlowStore() {
       const updated = s.timeBlocks.map((b) =>
         b.id === blockId ? { ...b, date: newDate } : b
       );
-      // Resolve any overlaps on the target date
-      const resolved = resolveOverlaps(updated, blockId);
+      const resolved = resolveOverlaps(updated, blockId, 1, s.preferences.categories);
       return { ...s, timeBlocks: resolved };
     });
   }, [setState]);
 
   const displaceBlock = useCallback((blockId: string) => {
     setState((s) => {
-      const resolved = resolveOverlaps(s.timeBlocks, blockId);
+      const resolved = resolveOverlaps(s.timeBlocks, blockId, 1, s.preferences.categories);
       return { ...s, timeBlocks: resolved };
     });
   }, [setState]);

@@ -407,13 +407,20 @@ The user sleeps from ${sleepStartHour}:00 to ${sleepEndHour}:00. This is an ABSO
 
 == CATEGORY SCHEDULING WINDOWS (HARD BOUNDARIES) ==
 
-Each category has a scheduling window that MUST be respected. NEVER schedule a task outside its category's window:
+Each category has a scheduling window (hours AND allowed days) that MUST be respected. NEVER schedule a task outside its category's window:
 ${(preferences.categories || []).map((c) => {
   const w = c.schedulingWindow || { startHour: 7, endHour: 21 };
-  return `- ${c.id}: ${w.startHour}:00 – ${w.endHour}:00`;
+  const dayNames = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
+  const days = w.allowedDays && w.allowedDays.length > 0 && w.allowedDays.length < 7
+    ? w.allowedDays.map((d) => dayNames[d]).join(", ")
+    : "all days";
+  return `- ${c.id}: ${w.startHour}:00 – ${w.endHour}:00 (${days})`;
 }).join("\n")}
 
-When placing blocks in generate_schedule, check that each block's startHour and endHour (startHour + durationHours) fall within its category's scheduling window. If a task's preferred time conflicts with its category window, schedule it within the window instead.
+When placing blocks in generate_schedule:
+1. Check that each block's startHour and endHour (startHour + durationHours) fall within its category's scheduling window hours.
+2. Check that the target date's day-of-week is in the category's allowed days. If not, move the task to the nearest allowed day.
+3. If a task's preferred time conflicts with its category window, schedule it within the window instead.
 
 NOTE: Meal blocks (lunch & dinner) are automatically generated for today and tomorrow by the app. When generating schedules, work AROUND existing meal blocks — do not remove them. If the user explicitly asks to skip a meal or change a meal time, that's fine.
 
