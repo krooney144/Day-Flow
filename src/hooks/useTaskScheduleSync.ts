@@ -1,4 +1,4 @@
-import { useEffect } from "react";
+import { useEffect, useRef } from "react";
 import { useDayFlow } from "@/context/DayFlowContext";
 import { findNextAvailableSlot } from "@/lib/scheduling-utils";
 import { TimeBlock } from "@/types/dayflow";
@@ -17,26 +17,26 @@ function normalizeTitle(raw: string): string {
 }
 
 /**
- * Failsafe: on mount, find any active tasks with horizon "today" or "soon"
- * missing a schedule block and auto-create blocks for them.
- * Spreads tasks across appropriate days based on horizon.
- *
- * Skips tasks that were part of an AI bulk schedule (tracked via
- * aiScheduledTaskIds) to avoid creating duplicates when the AI used
- * slightly different titles in create_tasks vs generate_schedule.
+ * One-shot failsafe: on mount, find any active tasks missing a schedule block
+ * and auto-create blocks for them. Runs ONCE (not reactively) to avoid
+ * render cascades from updating timeBlocks inside an effect that depends on
+ * timeBlocks.
  */
 export function useTaskScheduleSync() {
-  const { tasks, timeBlocks, addTimeBlocks, preferences, getAIScheduledTaskIds } = useDayFlow();
+  const { tasks, timeBlocks, addTimeBlocks, preferences } = useDayFlow();
+  const hasRun = useRef(false);
 
   useEffect(() => {
+    // Only run once per mount — the auto-scheduling fallback in executeToolCalls
+    // handles the AI path; this is just a safety net for app startup.
+    if (hasRun.current) return;
+    hasRun.current = true;
+
     const now = new Date();
     const today = now.toISOString().split("T")[0];
     const currentHour = now.getHours() + now.getMinutes() / 60;
     const workEnd = preferences.workEndHour ?? 18;
     const isPastWorkHours = currentHour >= workEnd;
-
-    // Get task IDs that the AI already scheduled — don't second-guess those
-    const aiScheduledIds = getAIScheduledTaskIds();
 
     const activeTasks = tasks.filter(
       (t) => t.status === "active" && t.horizon !== "backlog"
@@ -44,9 +44,6 @@ export function useTaskScheduleSync() {
     const scheduledTaskIds = new Set(
       timeBlocks.filter((b) => b.taskId).map((b) => b.taskId)
     );
-    // Also track scheduled titles to catch blocks where AI omitted taskId
-    // Include ALL block types (task, event, meal, etc.) to prevent duplicates
-    // when a task has a corresponding fixed event block
     const scheduledTitlesExact = new Set(
       timeBlocks.map((b) => b.title.toLowerCase().trim())
     );
@@ -55,14 +52,9 @@ export function useTaskScheduleSync() {
     );
 
     const orphaned = activeTasks.filter((t) => {
-      // Already linked by taskId
       if (scheduledTaskIds.has(t.id)) return false;
-      // Exact title match with an existing block
       if (scheduledTitlesExact.has(t.title.toLowerCase().trim())) return false;
-      // Normalized title match (catches "&" vs "and", parentheticals, etc.)
       if (scheduledTitlesNormalized.has(normalizeTitle(t.title))) return false;
-      // AI already made scheduling decisions for this task — trust it
-      if (aiScheduledIds.has(t.id)) return false;
       return true;
     });
     if (orphaned.length === 0) return;
@@ -82,7 +74,6 @@ export function useTaskScheduleSync() {
       const durationHours = (task.estimatedMinutes || 30) / 60;
       const category = preferences.categories.find((c) => c.id === task.categoryId);
 
-      // Pick date based on horizon
       let targetDate: string;
       switch (task.horizon) {
         case "today":
@@ -123,5 +114,5 @@ export function useTaskScheduleSync() {
     }
 
     addTimeBlocks(newBlocks);
-  }, [tasks, timeBlocks, addTimeBlocks, preferences, getAIScheduledTaskIds]);
+  }, [tasks, timeBlocks, addTimeBlocks, preferences]);
 }
